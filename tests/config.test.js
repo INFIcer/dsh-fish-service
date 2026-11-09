@@ -10,6 +10,7 @@ import {
   buildConfigSchema,
   defaultConfig,
   envOverrides,
+  normalizeAutoReadSessions,
   normalizeConfig,
   publicConfig,
 } from '../lib/config.js'
@@ -38,6 +39,7 @@ test('默认配置符合 P1 契约', () => {
     // P2 朗读 / 语音输入默认值
     assert.equal(c.ttsSpeed, 1)
     assert.equal(c.autoRead, false)
+    assert.deepEqual(c.autoReadSessions, {})
     assert.equal(c.readMaxChars, 2000)
     assert.equal(c.readConcurrency, 2)
     assert.equal(c.readSkipCode, true)
@@ -236,6 +238,95 @@ test('normalizeConfig：P2 朗读/语音字段钳范围、非法枚举回退', (
     assert.equal(正常.readConcurrency, 1)
     assert.equal(正常.recordMime, 'wav')
     assert.equal(正常.asrLanguage, 'zh')
+  } finally {
+    temp.cleanup()
+  }
+})
+
+test('autoReadSessions：默认空表；旧配置没有该字段时行为不变', () => {
+  const temp = makeTempDir()
+  try {
+    assert.deepEqual(defaultConfig(temp.dir).autoReadSessions, {})
+    const 旧 = normalizeConfig({ autoRead: true }, { homeDir: temp.dir })
+    assert.equal(旧.autoRead, true)
+    assert.deepEqual(旧.autoReadSessions, {})
+    // 只有全局默认时，所有会话都按它表现（回落由客户端完成）。
+    assert.deepEqual(normalizeAutoReadSessions(undefined), { value: {}, warnings: [], valid: true })
+  } finally {
+    temp.cleanup()
+  }
+})
+
+test('autoReadSessions：键须以 session- 开头、值转布尔、非法项忽略并提示', () => {
+  const temp = makeTempDir()
+  const warnings = []
+  try {
+    const c = normalizeConfig({
+      autoReadSessions: {
+        'session-a': true,
+        'session-b': 'false',
+        'session-c': 1,
+        'session-d': 0,
+        'not-a-session': true,
+        '': true,
+      },
+    }, { homeDir: temp.dir, onWarning: (警告) => warnings.push(警告) })
+    assert.deepEqual(c.autoReadSessions, {
+      'session-a': true,
+      'session-b': false,
+      'session-c': true,
+      'session-d': false,
+    })
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /2 条无法识别/)
+
+    // 只要不是普通对象就整项丢弃，不报错。
+    for (const 非法 of [[], 'session-a', 42]) {
+      const 规范 = normalizeAutoReadSessions(非法)
+      assert.deepEqual(规范.value, {})
+      assert.equal(规范.valid, false)
+      assert.equal(规范.warnings.length, 1)
+    }
+  } finally {
+    temp.cleanup()
+  }
+})
+
+test('autoReadSessions：最多保留 200 条，超出部分丢弃并提示', () => {
+  const temp = makeTempDir()
+  const warnings = []
+  try {
+    const 表 = {}
+    for (let i = 0; i < 205; i += 1) 表[`session-${i}`] = i % 2 === 0
+    const c = normalizeConfig({ autoReadSessions: 表 }, {
+      homeDir: temp.dir,
+      onWarning: (警告) => warnings.push(警告),
+    })
+    assert.equal(Object.keys(c.autoReadSessions).length, 200)
+    assert.equal(c.autoReadSessions['session-199'], false)
+    assert.equal('session-200' in c.autoReadSessions, false)
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /最多保留 200 条/)
+  } finally {
+    temp.cleanup()
+  }
+})
+
+test('ConfigStore：按会话自动朗读能保存并重读', () => {
+  const temp = makeTempDir()
+  try {
+    const store = new ConfigStore({ homeDir: temp.dir })
+    store.load({}, {})
+    store.save({
+      ...store.current,
+      autoReadSessions: { 'session-a': true, 'session-b': false },
+    })
+    const raw = JSON.parse(readFileSync(join(temp.dir, 'fish-service-config.json'), 'utf8'))
+    assert.deepEqual(raw.autoReadSessions, { 'session-a': true, 'session-b': false })
+
+    const again = new ConfigStore({ homeDir: temp.dir })
+    assert.deepEqual(again.load({}, {}).autoReadSessions, { 'session-a': true, 'session-b': false })
+    assert.deepEqual(again.warnings, [])
   } finally {
     temp.cleanup()
   }

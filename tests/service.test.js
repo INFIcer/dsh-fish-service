@@ -529,6 +529,42 @@ test('config：P2 朗读/语音字段可写，非法值给警告且不写', asyn
   assert.equal(stack.store.current.readConcurrency, 3)
 })
 
+test('config：按会话自动朗读可写、规范化；非法值只警告不写', async (t) => {
+  const stack = await makeStack()
+  t.after(() => stack.close())
+
+  const 一 = await stack.api.config.set({
+    autoReadSessions: { 'session-a': true, 'session-b': 'false', 'bad-key': true },
+  })
+  assert.equal(一.ok, true)
+  assert.deepEqual(一.applied, ['autoReadSessions'])
+  assert.equal(一.warnings.length, 1)
+  assert.match(一.warnings[0], /1 条无法识别/)
+  assert.deepEqual(stack.store.current.autoReadSessions, { 'session-a': true, 'session-b': false })
+  assert.equal(stack.store.current.autoRead, false) // 全局默认不受影响
+  assert.deepEqual(stack.api.config.get().autoReadSessions, { 'session-a': true, 'session-b': false })
+
+  const 二 = await stack.api.config.set({ autoReadSessions: { 'session-a': false } })
+  assert.deepEqual(二.applied, ['autoReadSessions'])
+  assert.deepEqual(stack.store.current.autoReadSessions, { 'session-a': false })
+
+  // 不是普通对象：整项忽略，保留原有设置，只给提示。
+  const 坏 = await stack.api.config.set({ autoReadSessions: ['session-a'] })
+  assert.deepEqual(坏.applied, [])
+  assert.equal(坏.warnings.length, 1)
+  assert.deepEqual(stack.store.current.autoReadSessions, { 'session-a': false })
+
+  // 超过 200 条：接受保存，但只保留前 200 条并提示。
+  const 超 = {}
+  for (let i = 0; i < 205; i += 1) 超[`session-${i}`] = true
+  const 三 = await stack.api.config.set({ autoReadSessions: 超 })
+  assert.equal(三.ok, true)
+  assert.deepEqual(三.applied, ['autoReadSessions'])
+  assert.equal(Object.keys(stack.store.current.autoReadSessions).length, 200)
+  assert.equal(三.warnings.length, 1)
+  assert.match(三.warnings[0], /200 条/)
+})
+
 test('ensureReady：tts 通过；preload 只对 tts 生效；未知能力 / 缺模型返回结构化错误', async (t) => {
   const stack = await makeStack({
     handler: basicHandler({

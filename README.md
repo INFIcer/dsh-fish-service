@@ -45,7 +45,7 @@ dsh-fish-ops（P4，规划中；本仓库未实现）
 - **语音输入**（`conversation.input.right`）：麦克风录音（webm/opus 优先，退化 WAV）→
   结束时在输入框浮层里三选一：**转文字**（插到光标处）/ **保留语音**（存 `cacheDir/voice`，
   路径插进输入框）/ **取消**。录音上限 5 分钟、25MB；记住上次选择只做高亮。
-- **自动朗读开关**（`conversation.input.left`）：默认关；开关写入 `config.autoRead`。
+- **自动朗读开关**（`conversation.input.left`）：按会话保存；未单独设置过的会话沿用设置页的「新会话默认自动朗读」。
 - **设置页**：在 P1 同一页里新增「朗读」「语音输入」「缓存」分区。
 
 细节、挂载点依据与手动验收步骤见 [`docs/P2.md`](docs/P2.md)，
@@ -87,7 +87,8 @@ Get-Content C:\Users\Administrator\.dsh\profiles\desktop\package.json -Raw
 | `visionTimeoutMs` | `600000` | 视觉关键帧 |
 | `ttsVoice` | `dafeiyu` | 默认音色（设置页可从 `/voices` 选） |
 | `ttsSpeed` | `1.0` | 朗读语速 0.5~2.0 |
-| `autoRead` | `false` | 自动朗读最终回复（默认关） |
+| `autoRead` | `false` | 新会话默认自动朗读（未单独设置过的会话沿用此值） |
+| `autoReadSessions` | `{}` | 按会话保存的自动朗读：`{ "session-…": bool }`，最多 200 条 |
 | `readMaxChars` | `2000` | 朗读单段最大字数 200~5000 |
 | `readConcurrency` | `2` | 朗读分段合成的批间并发度 1~4（1 = 完全串行） |
 | `readSkipCode` | `true` | 朗读时去掉代码块（关=念「代码块，共 N 行」） |

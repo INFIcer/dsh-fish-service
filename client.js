@@ -119,6 +119,41 @@ window.__ModuleLoader__.load({
       return 偏好请求
     }
 
+    // ---------------- 按会话自动朗读（纯函数，便于单测） ----------------
+
+    const 会话自动朗读上限 = 200
+    const 会话键合法 = (键) => typeof 键 === 'string' && /^session-/.test(键)
+    const 真值 = (值) => 值 === true || 值 === 'true' || 值 === 1 || 值 === '1'
+
+    /** 当前会话是否自动朗读：本会话有设置就用它，否则回落到全局默认（autoRead）。 */
+    function 读会话自动朗读(配置, 会话键) {
+      const 配置项 = 配置 && typeof 配置 === 'object' ? 配置 : {}
+      const 表 = 配置项.autoReadSessions && typeof 配置项.autoReadSessions === 'object'
+        && !Array.isArray(配置项.autoReadSessions)
+        ? 配置项.autoReadSessions
+        : null
+      if (表 && 会话键合法(会话键) && Object.prototype.hasOwnProperty.call(表, 会话键)) {
+        return 真值(表[会话键])
+      }
+      return 真值(配置项.autoRead)
+    }
+
+    /** 只改当前会话那一条，返回新配置；其它会话与全局默认保持不变。 */
+    function 写会话自动朗读(配置, 会话键, 开) {
+      const 配置项 = 配置 && typeof 配置 === 'object' ? 配置 : {}
+      if (!会话键合法(会话键)) return 配置项
+      const 表 = 配置项.autoReadSessions && typeof 配置项.autoReadSessions === 'object'
+        && !Array.isArray(配置项.autoReadSessions)
+        ? { ...配置项.autoReadSessions }
+        : {}
+      // 先删再写：最近改过的会话排在最后，超过上限时优先淘汰最早的设置。
+      delete 表[会话键]
+      表[会话键] = 开 === true || 开 === 'true'
+      const 键们 = Object.keys(表)
+      while (键们.length > 会话自动朗读上限) delete 表[键们.shift()]
+      return { ...配置项, autoReadSessions: 表 }
+    }
+
     // 有组件挂载时才轮询 /health（30 秒一次），没人看就不打扰服务。
     let 心跳 = null
     let 挂载数 = 0
@@ -563,6 +598,7 @@ select.fish-select option:checked {
       const 正在这条 = 播放态.messageId === messageId && (播放态.phase === 'synth' || 播放态.phase === 'playing')
       const 合成中 = 正在这条 && 播放态.phase === 'synth'
       const 播放中 = 正在这条 && 播放态.phase === 'playing'
+      const 自动朗读 = 读会话自动朗读(偏好态.config, 会话键)
 
       const 取文本 = () => 文本 || DOM取文本(按钮.current)
 
@@ -579,10 +615,11 @@ select.fish-select option:checked {
         await 播放.合成并播放(messageId, 原文本, 偏好.get().config || {})
       }
 
-      // 自动朗读：默认关；只在「偏好已加载 + 这条是最后一轮 + 页面可见」时触发一次。
+      // 自动朗读：按当前会话的设置判断（未单独设置时回落到全局默认）；
+      // 只在「偏好已加载 + 这条是最后一轮 + 页面可见」时触发一次。
       React.useEffect(() => {
         if (!挂载时已载入.current) return
-        if (!偏好态.载入 || 偏好态.config.autoRead !== true) return
+        if (!偏好态.载入 || !自动朗读) return
         if (!文本 || !位置) return
         const [轮次文本, 最后] = String(位置).split('|')
         if (最后 !== '1') return
@@ -593,7 +630,7 @@ select.fish-select option:checked {
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
         已自动朗读.add(messageId)
         void 播放.合成并播放(messageId, 文本, 偏好.get().config || {})
-      }, [文本, 位置, 偏好态.载入, 偏好态.config.autoRead, messageId, 会话键])
+      }, [文本, 位置, 偏好态.载入, 自动朗读, messageId, 会话键])
 
       const 标题 = 合成中 ? '正在合成…（再次点击取消）'
         : 播放中 ? '停止朗读'
@@ -1276,9 +1313,11 @@ select.fish-select option:checked {
 
     // ---------------- 自动朗读开关（输入框左侧） ----------------
 
-    function 自动朗读开关() {
+    function 自动朗读开关(props) {
       const 偏好态 = useStore(偏好)
       const [忙, 设忙] = React.useState(false)
+      const 会话键 = String(props?.sessionId || '')
+      const 可设置 = 会话键合法(会话键)
 
       React.useEffect(() => {
         保活(true)
@@ -1286,17 +1325,28 @@ select.fish-select option:checked {
         return () => 保活(false)
       }, [])
 
-      const 开 = 偏好态.config.autoRead === true
+      const 开 = 读会话自动朗读(偏好态.config, 会话键)
+      // 偏好还没读回来时不写：否则空表会把其它会话已有的设置覆盖掉。
+      const 就绪 = 可设置 && 偏好态.载入
       const 切 = async () => {
-        if (忙) return
+        if (忙 || !就绪) return
         设忙(true)
-        const r = await post('/save', { config: { autoRead: !开 } })
+        const 新配置 = 写会话自动朗读(偏好.get().config || {}, 会话键, !开)
+        const r = await post('/save', { config: { autoReadSessions: 新配置.autoReadSessions } })
         设忙(false)
         if (r && r.ok) {
-          偏好.set((旧) => ({ ...旧, config: { ...(旧.config || {}), autoRead: !开 } }))
+          偏好.set((旧) => ({
+            ...旧,
+            config: r.config
+              ? { ...(旧.config || {}), ...r.config }
+              : { ...(旧.config || {}), autoReadSessions: 新配置.autoReadSessions },
+          }))
         }
       }
-      const 标题 = 开 ? '自动朗读：已开启（新回复将自动朗读，点击关闭）' : '自动朗读：已关闭（点击开启）'
+      const 标题 = !可设置 ? '当前会话暂不能单独设置自动朗读'
+        : !偏好态.载入 ? '正在读取自动朗读设置…'
+          : 开 ? '本会话自动朗读：已开启（新回复将自动朗读，点击关闭）'
+            : '本会话自动朗读：已关闭（点击开启）'
 
       return h(React.Fragment, null,
         h('button', {
@@ -1306,7 +1356,7 @@ select.fish-select option:checked {
           title: 标题,
           'aria-label': 标题,
           'aria-pressed': 开 ? 'true' : 'false',
-          disabled: 忙,
+          disabled: 忙 || !就绪,
           onClick: 切,
         }, 图标发声(14), h('span', { style: { fontSize: 11.5 } }, 开 ? '自动朗读 开' : '自动朗读 关')))
     }
@@ -1437,7 +1487,7 @@ select.fish-select option:checked {
       readMaxChars: '单次最大字数',
       readConcurrency: '合成并发',
       readSkipCode: '去掉代码块',
-      autoRead: '自动朗读',
+      autoRead: '新会话默认自动朗读',
       recordMime: '录音格式',
       asrLanguage: '识别语言',
       rememberVoiceChoice: '记住上次选择',
@@ -1665,8 +1715,8 @@ select.fish-select option:checked {
           value: 配置.readConcurrency ?? 2,
           onChange: (e) => 改('readConcurrency', Number(e.target.value)),
         }), '同时合成几段（1~4，默认 2）。数值越大速度越快，但更占显存；显存紧张时建议调低。'),
-        行('自动朗读', 勾(配置.autoRead === true, (v) => 改('autoRead', v)),
-          '默认关闭。开启后会自动朗读新回复的正文，不包含工具调用、思考过程与代码块。'))
+        行('新会话默认自动朗读', 勾(配置.autoRead === true, (v) => 改('autoRead', v)),
+          '仅影响尚未单独设置过的会话；单个会话可在输入框左侧切换。'))
 
       const 语音块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '语音输入'),
@@ -1804,6 +1854,8 @@ select.fish-select option:checked {
 
     exports.apply = apply
     exports.inject = inject
+    // 仅供单元测试直接验证的纯函数；浏览器运行时不使用。
+    exports.__testing = { 读会话自动朗读, 写会话自动朗读, 会话自动朗读上限, 会话键合法 }
     return module.exports
   },
 })

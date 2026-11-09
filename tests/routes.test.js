@@ -40,6 +40,8 @@ function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = n
     baseUrl: 'http://127.0.0.1:7880',
     ttsVoice: 'dafeiyu',
     ttsSpeed: 1,
+    autoRead: false,
+    autoReadSessions: {},
     token: '***已设置***',
     enabled: true,
     cacheDir: 'C:\\cache',
@@ -173,6 +175,7 @@ test('GET /state：配置 / health / 能力 / 音色 / 缓存 / 错误 / env 覆
   assert.equal(json.plugin.configFile, env.configStore.filePath)
   assert.equal(json.plugin.logFile, 'C:\\Users\\Administrator\\.dsh\\fish-service.log')
   assert.equal(json.config.token, '***已设置***')
+  assert.deepEqual(json.config.autoReadSessions, {})
   assert.equal(json.health.ok, true)
   assert.equal(json.health.serviceVersion, '2.5.0')
   assert.equal(json.capabilities.tts.available, true)
@@ -217,6 +220,19 @@ test('POST /save：合法保存；GET 405；跨站 403；API 错 → 400', async
   assert.equal(bad.res.statusCode, 400)
   assert.equal(bad.json.code, 'bad_request')
   assert.match(bad.json.hint, /参数不对/)
+})
+
+test('POST /save：按会话自动朗读随补丁原样传给配置层', async () => {
+  const env = 搭环境()
+  const 会话 = { 'session-a': true, 'session-b': false }
+  const r = await env.call('/dsh-fish-service/save', {
+    method: 'POST',
+    body: { config: { autoReadSessions: 会话 } },
+    headers: { host: '127.0.0.1:10154' },
+  })
+  assert.equal(r.res.statusCode, 200)
+  assert.equal(r.json.ok, true)
+  assert.deepEqual(env.调用.保存.at(-1), { autoReadSessions: 会话 })
 })
 
 test('POST /test：在线返回能力；离线返回 code/hint', async () => {
