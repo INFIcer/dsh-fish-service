@@ -413,6 +413,31 @@ window.__ModuleLoader__.load({
 .fish-wave i { display: block; width: 3px; border-radius: 2px; background: currentColor; transition: height .12s linear; }
 .fish-err { color: #c0392b; font-size: 12px; }
 .fish-ok { color: var(--dsw-alias-state-business-primary, #2f6fed); font-size: 12px; }
+/* 原生下拉：某些主题下 option 会继承白色文字，而弹层的系统背景是白色 → 看不清。
+   这里显式给 select 与 option 配「背景/文字」成对颜色，跟随 DSH 主题变量。 */
+select.fish-select {
+  color-scheme: light dark;
+  background-color: var(--dsw-alias-bg-layer-1, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f1f1f);
+}
+select.fish-select option,
+select.fish-select optgroup {
+  background-color: var(--dsw-alias-bg-layer-1, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f1f1f);
+}
+select.fish-select option:checked {
+  background-color: var(--dsw-alias-state-business-primary, #2f6fed);
+  color: #ffffff;
+}
+/* 其它原生表单控件同理，避免浅底白字 */
+.fish-service-settings input,
+.fish-service-settings textarea,
+.fish-service-settings select {
+  background-color: var(--dsw-alias-bg-layer-1, #ffffff);
+  color: var(--dsw-alias-label-primary, #1f1f1f);
+}
+.fish-service-settings input[type="checkbox"] { accent-color: var(--dsw-alias-state-business-primary, #2f6fed); }
+.fish-service-settings input::placeholder { color: var(--dsw-alias-label-secondary, #888); opacity: 1; }
 `
 
     // 样式只注入一次：每个消息都渲染一份 <style> 会把 DOM 撑爆。
@@ -1357,6 +1382,7 @@ window.__ModuleLoader__.load({
 
     function 下拉(值, 选项, onChange) {
       return h('select', {
+        className: 'fish-select',
         style: S.small,
         value: 值 == null ? '' : String(值),
         onChange: (e) => onChange(e.target.value),
@@ -1446,7 +1472,7 @@ window.__ModuleLoader__.load({
       }
 
       if (!态) {
-        return h('div', { style: S.wrap },
+        return h('div', { className: 'fish-service-settings', style: S.wrap },
           h('div', { style: S.h1 }, '本地 AI'),
           h('div', { style: S.dim }, '正在读取状态…'))
       }
@@ -1564,7 +1590,7 @@ window.__ModuleLoader__.load({
         h('button', { type: 'button', style: S.btn, onClick: 看日志, disabled: 忙 }, '读取日志'),
         h('pre', { style: S.logs }, 日志 ? 日志.join('\n') : '（点“读取日志”查看）'))
 
-      return h('div', { style: S.wrap },
+      return h('div', { className: 'fish-service-settings', style: S.wrap },
         状态块,
         能力块,
         朗读块,
