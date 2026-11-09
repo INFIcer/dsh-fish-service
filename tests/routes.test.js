@@ -199,7 +199,7 @@ test('POST /save：合法保存；GET 405；跨站 403；API 错 → 400', async
   const wrongMethod = await env.call('/dsh-fish-service/save')
   assert.equal(wrongMethod.res.statusCode, 405)
   assert.equal(wrongMethod.json.code, 'bad_request')
-  assert.match(wrongMethod.json.hint, /只支持 POST/)
+  assert.match(wrongMethod.json.hint, /仅支持 POST/)
 
   const cross = await env.call('/dsh-fish-service/save', {
     method: 'POST',
@@ -207,7 +207,7 @@ test('POST /save：合法保存；GET 405；跨站 403；API 错 → 400', async
     headers: { host: '127.0.0.1:10154', origin: 'http://evil.example' },
   })
   assert.equal(cross.res.statusCode, 403)
-  assert.match(cross.json.hint, /跨站/)
+  assert.match(cross.json.hint, /来源/)
 
   const bad = await env.call('/dsh-fish-service/save', {
     method: 'POST',
@@ -810,7 +810,7 @@ test('POST /read：降级重试仍失败 → 200 + ok:false，hint 带并发/降
   assert.equal(json.code, 'service_down')
   assert.equal(第0批次数, 2)
   assert.match(json.hint, /并发/)
-  assert.match(json.hint, /降级串行重试/)
+  assert.match(json.hint, /逐段重试/)
 })
 
 test('POST /read/plan：立即返回分段计划，不调用 TTS；参数校验齐全', async () => {

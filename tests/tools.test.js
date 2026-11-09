@@ -86,7 +86,7 @@ test('fish_tts：21 条 → bad_request，不截断、不调用服务', async ()
   assert.equal(r.ok, false)
   assert.equal(r.code, 'bad_request')
   assert.match(r.hint, /最多 20 条/)
-  assert.match(r.hint, /不自动截断/)
+  assert.match(r.hint, /分批处理/)
   assert.equal(calls.length, 0)
 })
 

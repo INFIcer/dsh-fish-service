@@ -188,18 +188,18 @@ window.__ModuleLoader__.load({
         if (代 !== this.序号) return
         if (!plan || !plan.ok) {
           this.中止 = null
-          this.态.set({ phase: 'error', messageId, error: (plan && plan.hint) || '分段失败，稍后重试。', index: 0, total: 0 })
+          this.态.set({ phase: 'error', messageId, error: (plan && plan.hint) || '分段失败，请稍后重试。', index: 0, total: 0 })
           return
         }
 
         const 段们 = Array.isArray(plan.segments) ? plan.segments.filter((x) => x && typeof x.text === 'string') : []
         if (!段们.length) {
           this.中止 = null
-          this.态.set({ phase: 'error', messageId, error: '这段没有可朗读的文字。', index: 0, total: 0 })
+          this.态.set({ phase: 'error', messageId, error: '这段内容没有可朗读的文字。', index: 0, total: 0 })
           return
         }
         const 总段 = 段们.length
-        const 提示 = plan.truncated ? '（文本太长，只朗读了前一部分）' : ''
+        const 提示 = plan.truncated ? '（内容过长，仅朗读了前一部分）' : ''
 
         // 每段只请求一次；任务表让「预取」和「正在播的下一段」复用同一个请求。
         const 任务 = new Map()
@@ -231,7 +231,7 @@ window.__ModuleLoader__.load({
             this.态.set({
               phase: 'error',
               messageId,
-              error: (r && r.hint) || '这一段合成失败，稍后重试。',
+              error: (r && r.hint) || '这一段合成失败，请稍后重试。',
               index: 0,
               total: 0,
             })
@@ -270,13 +270,13 @@ window.__ModuleLoader__.load({
             resolve(错误)
           }
           音频.onended = () => 收尾('')
-          音频.onerror = () => 收尾('音频播放失败（文件可能已被缓存清理，再点一次重试）。')
+          音频.onerror = () => 收尾('音频无法播放，请再次点击朗读。')
           try {
             音频.play().then(() => { /* 开始播了 */ }).catch(() => {
-              收尾('浏览器拦住了自动播放，请再点一次朗读。')
+              收尾('浏览器阻止了自动播放，请再次点击朗读。')
             })
           } catch {
-            收尾('音频播放失败。')
+            收尾('音频无法播放。')
           }
           // 播放器被 stop() 强行换掉时，别让 Promise 永远挂着。
           检查 = setInterval(() => {
@@ -595,7 +595,7 @@ select.fish-select option:checked {
         void 播放.合成并播放(messageId, 文本, 偏好.get().config || {})
       }, [文本, 位置, 偏好态.载入, 偏好态.config.autoRead, messageId, 会话键])
 
-      const 标题 = 合成中 ? '正在合成…（再点一次取消）'
+      const 标题 = 合成中 ? '正在合成…（再次点击取消）'
         : 播放中 ? '停止朗读'
           : 偏好态.在线 === false ? '朗读这条回复（本地 AI 服务未启动）'
             : '朗读这条回复'
@@ -817,12 +817,12 @@ select.fish-select option:checked {
 
     function 麦克风错误(错误) {
       const 名 = String(错误?.name || '')
-      if (名 === 'NotAllowedError' || 名 === 'SecurityError') return '没拿到麦克风权限。到浏览器地址栏的权限设置里允许麦克风后再试。'
-      if (名 === 'NotFoundError' || 名 === 'DevicesNotFoundError') return '没找到麦克风设备。'
-      if (名 === 'NotReadableError') return '麦克风被别的程序占用了（会议软件 / 录音软件），关掉再试。'
-      if (名 === 'OverconstrainedError') return '麦克风不支持当前的录音参数。'
+      if (名 === 'NotAllowedError' || 名 === 'SecurityError') return '未获得麦克风权限，请在浏览器的权限设置中允许使用麦克风后重试。'
+      if (名 === 'NotFoundError' || 名 === 'DevicesNotFoundError') return '未找到麦克风设备。'
+      if (名 === 'NotReadableError') return '麦克风正被其他程序占用（如会议或录音软件），请关闭后重试。'
+      if (名 === 'OverconstrainedError') return '麦克风不支持当前的录音设置。'
       const 文 = String(错误?.message || 错误 || '')
-      return `打不开麦克风：${文}`
+      return `无法打开麦克风：${文}`
     }
 
     function 清理录音() {
@@ -848,7 +848,7 @@ select.fish-select option:checked {
       清理录音()
       const 代 = ++语音.代
       if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '这个浏览器不支持录音（需要 https 或 localhost 环境）。' }))
+        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '当前浏览器不支持录音，请换用其他浏览器，或通过本机地址访问。' }))
         安排关闭()
         return
       }
@@ -934,17 +934,17 @@ select.fish-select option:checked {
       const 时长 = Math.max(0, Date.now() - Number(态.startedAt || Date.now()))
       const 大小 = 结果.blob.size
       if (时长 > 5 * 60 * 1000) {
-        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '录音超过 5 分钟，已放弃。请分段录制。' }))
+        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '录音超过 5 分钟，已停止。请分段录制。' }))
         安排关闭(8000)
         return
       }
       if (大小 > 25 * 1024 * 1024) {
-        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '录音超过 25MB，已放弃。请缩短录音。' }))
+        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '录音超过 25MB，已停止。请缩短录音时长。' }))
         安排关闭(8000)
         return
       }
       if (大小 < 600) {
-        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '没录到声音（太短了），点「重新录」再来一次。' }))
+        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '未录到声音（录音过短），请点「重新录」重试。' }))
         安排关闭(8000)
         return
       }
@@ -1016,12 +1016,12 @@ select.fish-select option:checked {
       const r = await postForm('/transcribe-upload', 表单)
       if (代 !== 语音.代) return
       if (!r || !r.ok) {
-        语音.态.set((旧) => ({ ...旧, phase: 'choose', error: (r && r.hint) || '转写失败，稍后重试。' }))
+        语音.态.set((旧) => ({ ...旧, phase: 'choose', error: (r && r.hint) || '转写失败，请稍后重试。' }))
         return
       }
       const 文本 = String(r.text || '').trim()
       if (!文本) {
-        语音.态.set((旧) => ({ ...旧, phase: 'choose', error: '没听清，没转出文字。可以重录一次。' }))
+        语音.态.set((旧) => ({ ...旧, phase: 'choose', error: '未识别出文字，可重新录制。' }))
         return
       }
       const 插入成功 = 插入文本(inputActions, 文本)
@@ -1037,8 +1037,8 @@ select.fish-select option:checked {
         choice: 'text',
         error: '',
         hint: 插入成功
-          ? `已转写 ${文本.length} 字（耗时 ${Number(r.ms) || 0} ms），已插入输入框，可以继续编辑。`
-          : `已转写 ${文本.length} 字（耗时 ${Number(r.ms) || 0} ms），但输入框拒绝了插入；已尝试复制到剪贴板，也可以点「重试插入 / 复制文字」。`,
+          ? `已转写 ${文本.length} 字，文字已插入输入框，可以继续编辑。`
+          : `已转写 ${文本.length} 字，但未能插入输入框；文字已尝试复制到剪贴板，也可点「重试插入」或「复制文字」。`,
       }))
       安排关闭(插入成功 ? 4500 : 12000)
     }
@@ -1053,7 +1053,7 @@ select.fish-select option:checked {
       const r = await postForm('/voice-upload', 表单)
       if (代 !== 语音.代) return
       if (!r || !r.ok) {
-        语音.态.set((旧) => ({ ...旧, phase: 'choose', error: (r && r.hint) || '保存音频失败，稍后重试。' }))
+        语音.态.set((旧) => ({ ...旧, phase: 'choose', error: (r && r.hint) || '音频保存失败，请稍后重试。' }))
         return
       }
       const 路径 = String(r.path || '')
@@ -1069,8 +1069,8 @@ select.fish-select option:checked {
         choice: 'audio',
         error: '',
         hint: 插入成功
-          ? `音频已保存：${路径}\n这个 DSH 版本还不支持把音频作为输入框附件，已把路径插入输入框（可以删掉或补上文字）。`
-          : `音频已保存：${路径}\n路径没能插入输入框，已复制到剪贴板。`,
+          ? `音频已保存：${路径}\n当前版本暂不支持将音频作为输入框附件，已把文件路径插入输入框（可删除，或继续补充文字）。`
+          : `音频已保存：${路径}\n文件路径未能插入输入框，已复制到剪贴板。`,
       }))
       // 片段先留着：面板里还有「补上文字」按钮。
       安排关闭(12000)
@@ -1102,10 +1102,10 @@ select.fish-select option:checked {
         if (!录音中) 关闭语音面板()
       }
 
-      const 标题 = 录音中 ? `正在录音 ${格式时间(态.seconds)}，点一下结束`
+      const 标题 = 录音中 ? `正在录音 ${格式时间(态.seconds)}，点击结束`
         : 请求中 ? '正在请求麦克风…'
           : 离线 ? '语音输入（本地 AI 服务未启动）'
-            : '语音输入（点一下开始录音）'
+            : '语音输入（点击开始录音）'
 
       return h(React.Fragment, null,
         h('button', {
@@ -1177,7 +1177,7 @@ select.fish-select option:checked {
       const 行 = []
 
       if (态.phase === 'requesting') {
-        行.push(h('div', { key: 'req', className: 'fish-panel-dim' }, '浏览器地址栏可能会弹出麦克风权限请求，允许后就开始录音。'))
+        行.push(h('div', { key: 'req', className: 'fish-panel-dim' }, '浏览器可能会请求麦克风权限，允许后即开始录音。'))
       }
 
       if (态.phase === 'recording') {
@@ -1192,7 +1192,7 @@ select.fish-select option:checked {
       }
 
       if (态.phase === 'choose') {
-        行.push(h('div', { key: 'tip', className: 'fish-panel-dim' }, '录好的语音怎么处理？'))
+        行.push(h('div', { key: 'tip', className: 'fish-panel-dim' }, '请选择录音的处理方式。'))
         行.push(h('div', { key: 'choose', className: 'fish-panel-row' },
           h('button', {
             type: 'button',
@@ -1212,15 +1212,15 @@ select.fish-select option:checked {
             'data-primary': 高亮('cancel') ? '1' : undefined,
             onClick: () => { 记住选择('cancel'); 取消录音() },
           }, '取消')))
-        行.push(h('div', { key: 'sub', className: 'fish-panel-dim' }, '上次的选择会高亮，但不会自动执行。转文字会插到光标处，可以继续改。'))
+        行.push(h('div', { key: 'sub', className: 'fish-panel-dim' }, '上次的选择会高亮显示，但不会自动执行；转成的文字会插入光标处，可继续修改。'))
       }
 
       if (忙碌) {
         行.push(h('div', { key: 'busy', style: { display: 'flex', alignItems: 'center', gap: 8 } },
           h('span', { className: 'fish-spin', style: { display: 'inline-flex' } }, 图标转圈()),
-          h('span', null, 态.phase === 'transcribing' ? '正在用本地 ASR 转写，首次可能要等模型加载…' : '正在把音频写到缓存目录…')))
+          h('span', null, 态.phase === 'transcribing' ? '正在转写，首次使用可能需要加载模型…' : '正在保存录音…')))
         行.push(h('div', { key: 'busy-acts', className: 'fish-panel-row' },
-          h('button', { type: 'button', className: 'fish-btn', onClick: 关闭语音面板 }, '先关掉面板（转写在后台继续）')))
+          h('button', { type: 'button', className: 'fish-btn', onClick: 关闭语音面板 }, '关闭面板（转写将在后台继续）')))
       }
 
       if (态.phase === 'done') {
@@ -1232,7 +1232,7 @@ select.fish-select option:checked {
               type: 'button', className: 'fish-btn', 'data-primary': '1',
               onClick: () => {
                 const 成 = 插入文本(inputActions, 态.pendingText)
-                语音.态.set((旧) => ({ ...旧, hint: 成 ? `已插入 ${态.pendingText.length} 字。` : '还是插不进去；文本已在剪贴板里，按 Ctrl+V 粘贴。', pendingText: 成 ? '' : 态.pendingText }))
+                语音.态.set((旧) => ({ ...旧, hint: 成 ? `已插入 ${态.pendingText.length} 字。` : '仍无法插入；文字已复制到剪贴板，请按 Ctrl+V 粘贴。', pendingText: 成 ? '' : 态.pendingText }))
               },
             }, '重试插入'),
             h('button', {
@@ -1242,7 +1242,7 @@ select.fish-select option:checked {
         }
         if (态.path && !态.text && 语音.片段) {
           行.push(h('div', { key: 'extra', className: 'fish-panel-row' },
-            h('button', { type: 'button', className: 'fish-btn', onClick: () => void 转文字(inputActions) }, '补上文字（可选转写）')))
+            h('button', { type: 'button', className: 'fish-btn', onClick: () => void 转文字(inputActions) }, '补充文字（可选）')))
         }
         行.push(h('div', { key: 'done-acts', className: 'fish-panel-row' },
           h('button', { type: 'button', className: 'fish-btn', onClick: 关闭语音面板 }, '关闭')))
@@ -1271,7 +1271,7 @@ select.fish-select option:checked {
             }, h('span', { style: { fontSize: 15, lineHeight: 1 } }, '×')) : null),
           行,
           h('div', { className: 'fish-panel-dim', style: { marginTop: 8 } },
-            偏好态.在线 === false ? '注意：本地 AI 服务当前不在线，转写/合成会失败；可先启动服务。' : '音频只走本机 127.0.0.1，不上传云端。')))
+            偏好态.在线 === false ? '本地 AI 服务未启动，转写与朗读暂不可用，请先启动服务。' : '录音保存在本机，不会上传。')))
     }
 
     // ---------------- 自动朗读开关（输入框左侧） ----------------
@@ -1296,7 +1296,7 @@ select.fish-select option:checked {
           偏好.set((旧) => ({ ...旧, config: { ...(旧.config || {}), autoRead: !开 } }))
         }
       }
-      const 标题 = 开 ? '自动朗读：开（新回复会自动念出来，点一下关掉）' : '自动朗读：关（点一下打开）'
+      const 标题 = 开 ? '自动朗读：已开启（新回复将自动朗读，点击关闭）' : '自动朗读：已关闭（点击开启）'
 
       return h(React.Fragment, null,
         h('button', {
@@ -1408,8 +1408,8 @@ select.fish-select option:checked {
     }
 
     const 能力中文 = {
-      tts: 'TTS 语音合成',
-      asr: 'ASR 语音识别',
+      tts: '语音合成',
+      asr: '语音识别',
       translate: '翻译',
       separate: '人声分离',
       vision: '视觉关键帧',
@@ -1421,7 +1421,34 @@ select.fish-select option:checked {
       service_down: '服务未启动',
       model_missing: '模型未下载',
       not_supported: '服务不支持',
-      api_incompatible: '契约版本不匹配',
+      api_incompatible: '服务版本不兼容',
+    }
+
+    // 设置页给用户看的字段名；环境变量覆盖提示只显示中文名。
+    const 配置中文 = {
+      baseUrl: '服务地址',
+      apiVersion: '服务版本',
+      requestTimeoutMs: '请求超时',
+      asrTimeoutMs: '语音识别超时',
+      visionTimeoutMs: '视觉分析超时',
+      healthIntervalMs: '状态检查间隔',
+      ttsVoice: '默认音色',
+      ttsSpeed: '语速',
+      readMaxChars: '单次最大字数',
+      readConcurrency: '合成并发',
+      readSkipCode: '去掉代码块',
+      autoRead: '自动朗读',
+      recordMime: '录音格式',
+      asrLanguage: '识别语言',
+      rememberVoiceChoice: '记住上次选择',
+      cacheDir: '缓存目录',
+      cacheMaxMb: '缓存上限',
+      cacheTtlHours: '缓存保留时长',
+      enabled: '总开关',
+      enabledCapabilities: '启用的能力',
+      installDir: '安装目录',
+      logLevel: '日志级别',
+      token: '访问令牌',
     }
 
     const 提示 = (文本) => h('div', { style: S.hint }, 文本)
@@ -1515,11 +1542,11 @@ select.fish-select option:checked {
       }
 
       const 测试 = async () => {
-        设忙(true); 设说('正在连接本地 AI 服务…')
+        设忙(true); 设说('正在测试连接…')
         const r = await post('/test', { timeoutMs: 4000 })
         设忙(false)
-        if (r && r.ok) 设说(`连接正常：服务 v${r.serviceVersion || '?'}，api ${r.apiVersion || '?'}，延迟 ${r.latencyMs}ms。`)
-        else 设说(`连接失败：${(r && r.hint) || '服务没连上。'}`)
+        if (r && r.ok) 设说(`连接正常：服务 v${r.serviceVersion || '?'}，延迟 ${r.latencyMs}ms。`)
+        else 设说(`连接失败：${(r && r.hint) || '服务未连接，请确认已启动。'}`)
         await 拉()
       }
 
@@ -1541,7 +1568,7 @@ select.fish-select option:checked {
         设忙(false)
         if (r && r.ok) {
           const mb = Math.round(((r.bytes || 0) / 1024 / 1024) * 10) / 10
-          设说(`已清空 TTS 缓存（${r.files || 0} 个文件，释放 ${mb} MB）。下次朗读会重新合成。`)
+          设说(`已清空朗读缓存（${r.files || 0} 个文件，释放 ${mb} MB），下次朗读将重新合成。`)
         } else {
           设说(`清缓存失败：${(r && r.hint) || '未知错误'}`)
         }
@@ -1555,7 +1582,7 @@ select.fish-select option:checked {
         设忙(false)
         if (r && r.ok) {
           const mb = Math.round(((r.bytesFreed || 0) / 1024 / 1024) * 10) / 10
-          设说(`已清理：过期 ${r.expired || 0} 个、LRU ${r.lru || 0} 个，释放 ${mb} MB。`)
+          设说(`已清理过期缓存 ${r.expired || 0} 个、超出上限 ${r.lru || 0} 个，释放 ${mb} MB。`)
         } else {
           设说(`清理失败：${(r && r.hint) || '未知错误'}`)
         }
@@ -1585,7 +1612,7 @@ select.fish-select option:checked {
         })),
         能力表.tts && !能力表.tts.available && 能力表.tts.reason === 'service_down'
           ? h('div', { style: { ...S.danger, marginTop: 8 } },
-              '服务未启动。手动启动：在 E:\\LocalAIService 目录运行 start_ai_service.ps1（P1 不自动安装/启动）。')
+              '服务未启动，请先启动本地 AI 服务。')
           : null)
 
       const 音色选项 = [{ value: 配置.ttsVoice || 'dafeiyu', label: 配置.ttsVoice || 'dafeiyu' }]
@@ -1596,16 +1623,16 @@ select.fish-select option:checked {
       const 服务块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '服务连接'),
         行('服务地址', 输入(配置.baseUrl, (v) => 改('baseUrl', v), 'http://127.0.0.1:7880'),
-          '唯一保存服务地址的地方；其它插件通过 fish.service 读取。'),
+          '本地 AI 服务的地址，其它插件也使用这里的设置。'),
         行('请求超时（毫秒）', h('input', {
           style: S.small, type: 'number', min: 1000, max: 1800000,
           value: 配置.requestTimeoutMs ?? 180000,
           onChange: (e) => 改('requestTimeoutMs', Number(e.target.value)),
-        }), 'TTS / 一般请求；ASR 与视觉有各自更长的超时。'),
+        }), '一般请求的超时时间；语音识别与视觉分析会自动使用更长的超时。'),
         行('缓存目录', 输入(配置.cacheDir, (v) => 改('cacheDir', v), ''),
-          `产物只写这里：TTS wav / 分离 stems / 关键帧 / 保留的录音。当前 ${缓存.mb || 0} MB、${缓存.files || 0} 个文件；上限 ${缓存.maxMb || 2048} MB、TTL ${缓存.ttlHours || 72} 小时。`),
+          `朗读音频、分离音轨、关键帧与保留的录音都保存在此目录。当前占用 ${缓存.mb || 0} MB，共 ${缓存.files || 0} 个文件；超过 ${缓存.maxMb || 2048} MB 或 ${缓存.ttlHours || 72} 小时后会自动清理。`),
         行('总开关', 勾(配置.enabled !== false, (v) => 改('enabled', v)),
-          '关掉后工具返回 service_not_installed，设置页仍可用。'),
+          '关闭后，相关工具将不可用；设置页仍可使用。'),
         行('日志级别', 下拉(配置.logLevel || 'info', [
           { value: 'debug', label: 'debug' },
           { value: 'info', label: 'info' },
@@ -1613,67 +1640,68 @@ select.fish-select option:checked {
           { value: 'error', label: 'error' },
         ], (v) => 改('logLevel', v)), `日志文件：${(态.plugin && 态.plugin.logFile) || ''}`),
         (态.envOverrides && 态.envOverrides.length)
-          ? h('div', { style: { ...S.danger, marginTop: 4 } }, `这些字段被环境变量覆盖：${态.envOverrides.join(', ')}`)
+          ? h('div', { style: { ...S.danger, marginTop: 4 } },
+              `以下设置已由系统环境变量指定，在设置页修改不会生效：${态.envOverrides.map((名) => 配置中文[名] || '其他设置').join('、')}`)
           : null)
 
       const 朗读块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '朗读'),
         行('默认音色', 下拉(配置.ttsVoice || 'dafeiyu', 音色选项, (v) => 改('ttsVoice', v)),
-          '服务端 /voices 里的文件名（不含扩展名）；消息旁的喇叭按钮默认用它。'),
+          '朗读默认使用的声音，消息旁的朗读按钮也会使用它。'),
         行('语速', h('input', {
           style: S.small, type: 'number', min: 0.5, max: 2, step: 0.05,
           value: 配置.ttsSpeed ?? 1,
           onChange: (e) => 改('ttsSpeed', Number(e.target.value)),
         }), '0.5~2.0，默认 1.0。'),
         行('去掉代码块', 勾(配置.readSkipCode !== false, (v) => 改('readSkipCode', v)),
-          '开：代码块整段跳过；关：念一句「代码块，共 N 行」，代码内容本身不会念。'),
+          '开启后跳过代码块；关闭后只朗读「代码块，共 N 行」，不朗读代码内容。'),
         行('单次最大字数', h('input', {
           style: S.small, type: 'number', min: 200, max: 5000, step: 100,
           value: 配置.readMaxChars ?? 2000,
           onChange: (e) => 改('readMaxChars', Number(e.target.value)),
-        }), '超过就分段合成（200~5000）。消息总长超过 2 万字只朗读前 2 万字。'),
-        行('朗读并发度', h('input', {
+        }), '超过此长度将分段合成（200~5000 字）；单条消息超过 2 万字时，只朗读前 2 万字。'),
+        行('合成并发', h('input', {
           style: S.small, type: 'number', min: 1, max: 4, step: 1,
           value: 配置.readConcurrency ?? 2,
           onChange: (e) => 改('readConcurrency', Number(e.target.value)),
-        }), '分段合成时最多几批同时请求（1~4，默认 2）。调 1 = 完全串行；显存/队列紧张时调低更稳。会等首段合成完就开始播，不需要等全文。'),
+        }), '同时合成几段（1~4，默认 2）。数值越大速度越快，但更占显存；显存紧张时建议调低。'),
         行('自动朗读', 勾(配置.autoRead === true, (v) => 改('autoRead', v)),
-          '默认关。开启后新回复的最终文本会自动念出来（不读工具调用/思考/代码块）。'))
+          '默认关闭。开启后会自动朗读新回复的正文，不包含工具调用、思考过程与代码块。'))
 
       const 语音块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '语音输入'),
         行('录音格式', 下拉(配置.recordMime || 'auto', [
-          { value: 'auto', label: 'auto（webm/opus 优先）' },
-          { value: 'webm', label: 'webm / opus' },
-          { value: 'wav', label: 'wav（PCM，较大）' },
-        ], (v) => 改('recordMime', v)), 'auto 会按浏览器支持挑最好的；都不支持时自动退化到 wav。'),
-        行('ASR 语言', 下拉(配置.asrLanguage || 'auto', [
+          { value: 'auto', label: '自动（按浏览器支持选择）' },
+          { value: 'webm', label: 'webm' },
+          { value: 'wav', label: 'wav（体积较大）' },
+        ], (v) => 改('recordMime', v)), '自动：按浏览器支持的格式择优；均不支持时改用 wav。'),
+        行('识别语言', 下拉(配置.asrLanguage || 'auto', [
           { value: 'auto', label: 'auto（自动判断）' },
           { value: 'zh', label: 'zh 中文' },
           { value: 'en', label: 'en 英文' },
           { value: 'ja', label: 'ja 日文' },
-        ], (v) => 改('asrLanguage', v)), '录音结束点「转文字」时用它。'),
+        ], (v) => 改('asrLanguage', v)), '结束录音后点「转文字」时使用该语言。'),
         行('记住上次选择', 勾(配置.rememberVoiceChoice !== false, (v) => 改('rememberVoiceChoice', v)),
-          '只把上次的「转文字 / 保留语音 / 取消」高亮成默认，不会自动执行。'),
+          '仅将上次的选项显示为默认，不会自动执行。'),
         h('div', { style: { ...S.dim, marginTop: 2 } },
-          '录音最长 5 分钟、最大 25MB；音频只走本机 127.0.0.1。'))
+          '录音最长 5 分钟、最大 25MB；录音保存在本机，不会上传。'))
 
       const 缓存块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '缓存'),
         h('div', { style: S.dim },
-          `产物目录：${缓存.dir || 配置.cacheDir || '—'}｜当前 ${缓存.mb || 0} MB、${缓存.files || 0} 个文件`
-          + `｜上限 ${缓存.maxMb || 2048} MB｜TTL ${缓存.ttlHours || 72} 小时`),
+          `保存位置：${缓存.dir || 配置.cacheDir || '—'}｜当前占用 ${缓存.mb || 0} MB，共 ${缓存.files || 0} 个文件`
+          + `｜上限 ${缓存.maxMb || 2048} MB，超过 ${缓存.ttlHours || 72} 小时自动清理`),
         h('div', { style: { ...S.dim, marginTop: 4 } },
-          'TTS：' + (缓存统计
-            ? `${缓存统计.files || 0} 个音频 / ${(Math.round(((缓存统计.bytes || 0) / 1024 / 1024) * 10) / 10)} MB；`
-              + `命中 ${缓存统计.hits || 0} 次、未命中 ${缓存统计.misses || 0} 次；`
-              + `命中率 ${Math.round((缓存统计.hitRate || 0) * 1000) / 10}%（本次 DSH 运行以来）`
+          '已缓存音频：' + (缓存统计
+            ? `${缓存统计.files || 0} 段 / ${(Math.round(((缓存统计.bytes || 0) / 1024 / 1024) * 10) / 10)} MB；`
+              + `复用 ${缓存统计.hits || 0} 次、重新合成 ${缓存统计.misses || 0} 次；`
+              + `复用率 ${Math.round((缓存统计.hitRate || 0) * 1000) / 10}%（本次运行以来）`
             : '统计读取中…')),
         h('div', { style: { ...S.dim, marginTop: 2 } },
-          '相同文本 + 音色 + 语速 + 情绪 会复用音频；换音色或语速会重新合成。命中时 /tts 返回 cached:true、ms:0。'),
+          '相同文字、音色与语速再次朗读时直接复用，不再重新合成。'),
         h('div', { style: { display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' } },
-          h('button', { type: 'button', style: S.btn, onClick: 清缓存, disabled: 忙 }, '清空 TTS 缓存'),
-          h('button', { type: 'button', style: S.btn, onClick: 清过期, disabled: 忙 }, '清理过期缓存（TTL/LRU）')))
+          h('button', { type: 'button', style: S.btn, onClick: 清缓存, disabled: 忙 }, '清空朗读缓存'),
+          h('button', { type: 'button', style: S.btn, onClick: 清过期, disabled: 忙 }, '清理过期缓存')))
 
       const 动作块 = h('div', { style: S.card },
         h('div', { style: { display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap' } },
@@ -1686,7 +1714,7 @@ select.fish-select option:checked {
             disabled: 忙,
           }, '刷新')),
         h('div', { style: { ...S.dim, marginTop: 6 } },
-          '保存后立即生效（朗读/语音按钮下一次点击就用新设置）；不用重启 DSH。'))
+          '保存后立即生效，无需重启。'))
 
       const 状态块 = h('div', { style: S.card },
         h('div', { style: { display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' } },
@@ -1695,7 +1723,7 @@ select.fish-select option:checked {
             在线 ? `在线${兼容 ? '' : '（版本不兼容）'} · v${健康.serviceVersion || '?'}` : '服务未启动'),
           h('span', { style: S.dim }, `插件 v${(态.plugin && 态.plugin.version) || '?'}`)),
         h('div', { style: S.dim },
-          `${配置.baseUrl}｜API ${健康.apiVersion || '?'}｜延迟 ${健康.latencyMs || 0}ms`
+          `${配置.baseUrl}｜延迟 ${健康.latencyMs || 0}ms`
           + (健康.vram ? `｜显存 ${健康.vram.freeMb || 0}/${健康.vram.totalMb || 0} MB` : '')
           + `｜最近检查 ${健康.checkedAt ? new Date(健康.checkedAt).toLocaleTimeString('zh-CN', { hour12: false }) : '—'}`),
         (健康.lastError && 健康.lastError.hint)
@@ -1703,7 +1731,7 @@ select.fish-select option:checked {
           : null,
         (态.errors && 态.errors.length)
           ? h('div', { style: { ...S.dim, marginTop: 4 } },
-              `最近错误 ${态.errors.length} 条；最新：${态.errors[态.errors.length - 1].code} ${态.errors[态.errors.length - 1].hint || ''}`)
+              `最近有 ${态.errors.length} 条错误，最新：${态.errors[态.errors.length - 1].hint || '未知错误'}`)
           : null)
 
       const 日志块 = h('div', null,

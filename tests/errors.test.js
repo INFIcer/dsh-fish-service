@@ -22,7 +22,7 @@ test('错误码表覆盖契约第 3 节', () => {
     'model_missing', 'not_implemented', 'service_down', 'service_not_installed',
     'timeout', 'upstream_error', 'vram_exhausted',
   ])
-  assert.match(defaultHint('service_down'), /服务没在运行/)
+  assert.match(defaultHint('service_down'), /未启动/)
 })
 
 test('507 insufficient_vram → vram_exhausted，hint 含显存数字，不可重试', () => {
@@ -38,7 +38,7 @@ test('507 insufficient_vram → vram_exhausted，hint 含显存数字，不可�
 test('507 就算没有 need/free 也给中文 hint', () => {
   const e = mapHttpError(507, { ok: false, error: 'insufficient_vram' })
   assert.equal(e.code, 'vram_exhausted')
-  assert.match(e.hint, /关掉占显存的程序/)
+  assert.match(e.hint, /关闭占用显存的程序/)
 })
 
 test('503 + capabilityReady=false → model_missing，不是 upstream_error', () => {
@@ -63,7 +63,7 @@ test('503 + 加载中文案 → model_loading；其它 503 → upstream_error �
   })
   assert.equal(upstream.code, 'upstream_error')
   assert.equal(upstream.retryable, true)
-  assert.match(upstream.hint, /可重试一次/)
+  assert.match(upstream.hint, /重试一次/)
 })
 
 test('504 → timeout，hint 带秒数；400/401/403/404/413/422 → bad_request 不重试', () => {
@@ -76,13 +76,13 @@ test('504 → timeout，hint 带秒数；400/401/403/404/413/422 → bad_request
     const e = mapHttpError(status, { ok: false, error: `e${status}`, detail: 'bad' })
     assert.equal(e.code, 'bad_request', `HTTP ${status}`)
     assert.equal(e.retryable, false, `HTTP ${status}`)
-    assert.match(e.hint, /参数不对|令牌/)
+    assert.match(e.hint, /参数有误|令牌/)
   }
 })
 
 test('401 hint 提示检查 token；409 job_canceled → canceled', () => {
   const auth = mapHttpError(401, { ok: false, error: 'unauthorized' })
-  assert.match(auth.hint, /token/)
+  assert.match(auth.hint, /令牌/)
   const canceled = mapHttpError(409, { ok: false, error: 'job_canceled' })
   assert.equal(canceled.code, 'canceled')
   assert.equal(canceled.retryable, false)
@@ -102,7 +102,7 @@ test('连接拒绝 → service_down，中文 hint，2 秒内返回', () => {
   const e = mapNetworkError(error, { baseUrl: 'http://127.0.0.1:7880' })
   assert.equal(e.code, 'service_down')
   assert.equal(e.retryable, true)
-  assert.match(e.hint, /服务没在运行/)
+  assert.match(e.hint, /未启动/)
   assert.match(e.detail, /ECONNREFUSED/)
 })
 
@@ -130,7 +130,7 @@ test('未知异常也能变成结构化失败包', () => {
   const pkg = toPublicError(new Error('插件炸了'))
   assert.equal(pkg.ok, false)
   assert.equal(pkg.code, 'upstream_error')
-  assert.match(pkg.hint, /插件内部错误/)
+  assert.match(pkg.hint, /插件出错/)
   assert.equal(pkg.retryable, false)
 })
 
@@ -144,7 +144,7 @@ test('extractErrorBody 兼容 OpenAI 风格与顶层 detail', () => {
 })
 
 test('hint 生成函数', () => {
-  assert.match(vramHint(), /显存不够/)
+  assert.match(vramHint(), /显存不足/)
   assert.match(vramHint(6912, 6000), /6\.8 GB/)
   assert.match(modelMissingHint('htdemucs_ft'), /htdemucs_ft/)
   assert.match(timeoutHint(60000), /60 秒/)

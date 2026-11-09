@@ -130,7 +130,7 @@ test('连接拒绝 → service_down，2 秒内返回', async () => {
   const 开始 = Date.now()
   await assert.rejects(client.getJson('/health'), (error) => {
     assert.equal(error.code, 'service_down')
-    assert.match(error.hint, /服务没在运行/)
+    assert.match(error.hint, /未启动/)
     return true
   })
   assert.ok(Date.now() - 开始 < 2000)
@@ -145,7 +145,7 @@ test('请求超时 → timeout（AbortError）', async (t) => {
   const 开始 = Date.now()
   await assert.rejects(client.getJson('/slow', { timeoutMs: 100 }), (error) => {
     assert.equal(error.code, 'timeout')
-    assert.match(error.hint, /等太久/)
+    assert.match(error.hint, /等待超时/)
     return true
   })
   assert.ok(Date.now() - 开始 < 700)
