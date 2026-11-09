@@ -780,6 +780,10 @@ interface InstallApi {
 | POST | `/config` | `{patch: {...}}` | 同 `fish.service.config.set` |
 | GET | `/voices` | — | `{ok, voices:[...]}` |
 | POST | `/tts` | `{text, voice?, speed?, language?, seed?}` | `audio/wav`（默认）或 `{ok, wavPath, id}`（`?mode=json`） |
+| POST | `/read` | `{text, voice?, speed?, maxChars?, skipCodeBlocks?}` | `{ok, wavPath, ms, items[{wavPath,url,ms,voice,bytes,chars}], chunks, chars, codeBlocks, truncated}`（P2） |
+| GET | `/audio?path=` | — | `audio/*`；只允许 `cacheDir` 内的 `.wav/.webm/.ogg/.opus/.mp3/.m4a`（P2） |
+| POST | `/transcribe-upload` | multipart `file` + `durationMs?` + `language?` + `speaker?` | `{ok, text, ms, elapsedMs?, language?, speaker?}`（P2，临时文件请求结束即删） |
+| POST | `/voice-upload` | multipart `file` + `durationMs?` | `{ok, path, bytes, mime}`（P2，存 `cacheDir/voice`） |
 | GET | `/audio/:id` | — | `audio/wav` 流；id 映射到缓存文件，防目录穿越 |
 | POST | `/asr` | multipart `file` + `language?` + `speaker?` | `{ok, text, speaker?, segments?}` |
 | GET | `/logs` | `?lines=200&file=service` | `{ok, lines:[]}`（代理 `/admin/logs`） |
@@ -851,7 +855,14 @@ interface InstallApi {
 | `autoStart` | bool | true | — | 安装后启用计划任务 |
 | `defaultVoice` | string | `default` | 存在于 `/voices` | 新装用服务端默认；迁移时若 `dafeiyu` 存在则导入 |
 | `autoRead` | bool | false | — | 默认关，避免迁移后突然出声 |
-| `maxCharsPerChunk` | int | 800 | 200~5000 | 长文分段 |
+| `maxCharsPerChunk` | int | 800 | 200~5000 | 长文分段（ops 用） |
+| `ttsSpeed` | number | 1.0 | 0.5~2.0 | 朗读语速（P2） |
+| `autoRead` | bool | false | — | 自动朗读最终回复（P2） |
+| `readMaxChars` | int | 2000 | 200~5000 | 朗读单段最大字数（P2） |
+| `readSkipCode` | bool | true | — | 朗读时去掉代码块（P2） |
+| `recordMime` | enum | auto | auto/webm/wav | 语音输入录音格式（P2） |
+| `rememberVoiceChoice` | bool | true | — | 记住三选一上次选择（P2，只做高亮） |
+| `asrLanguage` | enum | auto | auto/zh/en/ja | 语音输入 ASR 语言（P2） |
 | `requestTimeoutMs` | int | 180000 | 1000~1800000 | TTS/一般 |
 | `asrTimeoutMs` | int | 300000 | 1000~1800000 | ASR/分离 |
 | `visionTimeoutMs` | int | 600000 | 1000~1800000 | 视觉 |

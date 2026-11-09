@@ -35,6 +35,14 @@ test('默认配置符合 P1 契约', () => {
     assert.equal(c.logLevel, 'info')
     assert.equal(c.installMode, 'unknown')
     assert.deepEqual(c.enabledCapabilities, [])
+    // P2 朗读 / 语音输入默认值
+    assert.equal(c.ttsSpeed, 1)
+    assert.equal(c.autoRead, false)
+    assert.equal(c.readMaxChars, 2000)
+    assert.equal(c.readSkipCode, true)
+    assert.equal(c.recordMime, 'auto')
+    assert.equal(c.rememberVoiceChoice, true)
+    assert.equal(c.asrLanguage, 'auto')
   } finally {
     temp.cleanup()
   }
@@ -188,6 +196,41 @@ test('ConfigStore.save 写入的是规范化后的完整配置', () => {
     assert.equal(raw.cacheMaxMb, 4096)
     assert.equal(raw.version, CONFIG_VERSION)
     assert.equal(raw.baseUrl, 'http://127.0.0.1:7880')
+  } finally {
+    temp.cleanup()
+  }
+})
+
+test('normalizeConfig：P2 朗读/语音字段钳范围、非法枚举回退', () => {
+  const temp = makeTempDir()
+  try {
+    const c = normalizeConfig({
+      ttsSpeed: 9,
+      readMaxChars: 10,
+      readSkipCode: 'false',
+      autoRead: 'true',
+      recordMime: 'MP3',
+      rememberVoiceChoice: 0,
+      asrLanguage: 'ko',
+    }, { homeDir: temp.dir })
+    assert.equal(c.ttsSpeed, 2)
+    assert.equal(c.readMaxChars, 200)
+    assert.equal(c.readSkipCode, false)
+    assert.equal(c.autoRead, true)
+    assert.equal(c.recordMime, 'auto')
+    assert.equal(c.rememberVoiceChoice, false)
+    assert.equal(c.asrLanguage, 'auto')
+
+    const 正常 = normalizeConfig({
+      ttsSpeed: 1.257,
+      readMaxChars: 3000,
+      recordMime: 'wav',
+      asrLanguage: 'zh',
+    }, { homeDir: temp.dir })
+    assert.equal(正常.ttsSpeed, 1.26)
+    assert.equal(正常.readMaxChars, 3000)
+    assert.equal(正常.recordMime, 'wav')
+    assert.equal(正常.asrLanguage, 'zh')
   } finally {
     temp.cleanup()
   }

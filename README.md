@@ -1,6 +1,6 @@
 # dsh-fish-service
 
-> 状态：**P1 已完成**（插件骨架：Cordis 服务 + 8 个 Agent 工具 + 设置页 + 离线测试）。
+> 状态：**P2 已完成**（P1 骨架 + P2 界面入口：消息朗读按钮、语音输入三选一、自动朗读开关）。
 > 目标环境：DSH `0.2.2-rc.1`，本地服务 `localai-service 2.5.x`（HTTP 契约 `api_version = "1"`）。
 > 最后核对：2026-11-09。
 
@@ -32,8 +32,21 @@ dsh-fish-ops（P4，规划中；本仓库未实现）
 - **设置页**：状态、服务地址、超时、默认音色、缓存用量、能力列表（不可用带原因）、
   测试连接、日志。
 
-**P1 不做**（按设计留给后续阶段）：一键安装 / 内嵌 WebUI（P3）、消息朗读 / 语音输入（P2）、
-组合链路 `dsh-fish-ops`（P4）、`vision_watch` 的 URL 下载输入。
+## P2 做了什么（界面入口）
+
+- **消息朗读按钮**（`conversation.chat.assistant-actions`）：每条已定稿助手回复旁一个喇叭；
+  点击 → `POST /read` 清洗 + 分段 + 合成 → 浏览器按顺序播放；再点停止；切换消息停上一条。
+  失败显示中文 hint，不白屏、不抛 JS 异常。
+- **语音输入**（`conversation.input.right`）：麦克风录音（webm/opus 优先，退化 WAV）→
+  结束时在输入框浮层里三选一：**转文字**（插到光标处）/ **保留语音**（存 `cacheDir/voice`，
+  路径插进输入框）/ **取消**。录音上限 5 分钟、25MB；记住上次选择只做高亮。
+- **自动朗读开关**（`conversation.input.left`）：默认关；开关写入 `config.autoRead`。
+- **设置页**：在 P1 同一页里新增「朗读」「语音输入」两个分区。
+
+细节、挂载点依据与手动验收步骤见 [`docs/P2.md`](docs/P2.md)。
+
+**P1/P2 不做**（按设计留给后续阶段）：一键安装 / 内嵌 WebUI（P3）、组合链路 `dsh-fish-ops`（P4）、
+`vision_watch` 的 URL 下载输入。
 
 ## 安装
 
@@ -67,6 +80,13 @@ Get-Content C:\Users\Administrator\.dsh\profiles\desktop\package.json -Raw
 | `asrTimeoutMs` | `300000` | ASR / 人声分离 |
 | `visionTimeoutMs` | `600000` | 视觉关键帧 |
 | `ttsVoice` | `dafeiyu` | 默认音色（设置页可从 `/voices` 选） |
+| `ttsSpeed` | `1.0` | 朗读语速 0.5~2.0 |
+| `autoRead` | `false` | 自动朗读最终回复（默认关） |
+| `readMaxChars` | `2000` | 朗读单段最大字数 200~5000 |
+| `readSkipCode` | `true` | 朗读时去掉代码块（关=念「代码块，共 N 行」） |
+| `recordMime` | `"auto"` | 录音格式 auto/webm/wav |
+| `rememberVoiceChoice` | `true` | 记住语音输入上次选择（只做高亮） |
+| `asrLanguage` | `"auto"` | 语音输入 ASR 语言 auto/zh/en/ja |
 | `cacheDir` | `~/.dsh/fish-service-cache` | 产物目录；只在这里写文件 |
 | `cacheTtlHours` | `72` | 产物 TTL |
 | `cacheMaxMb` | `2048` | 缓存上限（超出按 LRU 删） |
@@ -114,6 +134,10 @@ Get-Content C:\Users\Administrator\.dsh\profiles\desktop\package.json -Raw
 | POST | `/test` | `{timeoutMs?}` 探测服务连通 |
 | GET | `/logs` | `?lines=1..1000`，插件内存日志（最近 200 行） |
 | GET | `/voices` | 服务端音色列表；服务没起时 `ok:false` + 空数组 |
+| POST | `/read` | `{text, voice?, speed?, maxChars?, skipCodeBlocks?}` → `{ok, wavPath, ms, items[], chunks, chars, codeBlocks, truncated}` |
+| GET | `/audio?path=` | 以 `audio/*` 返回 cacheDir 里的音频（防目录穿越） |
+| POST | `/transcribe-upload` | multipart 录音 → `{ok, text, ms, elapsedMs?, language?}` |
+| POST | `/voice-upload` | multipart 录音 → 存 `<cacheDir>/voice`，返回 `{ok, path, bytes, mime}` |
 
 ## 错误码
 
@@ -131,13 +155,17 @@ HTTP 映射：连接失败 → `service_down`；507 → `vram_exhausted`；503�
 
 ```powershell
 npm install     # 只装 @deepseek-ai/schemastery@3.18.4
-npm test        # 8 个测试文件，91 项断言
+npm test        # 11 个测试文件，124 项断言
 npm run check   # 所有 lib/*.js 与 client.js 的 node --check
 ```
 
 覆盖：错误映射与中文 hint、capabilities 解析 + 30 秒缓存、工具参数校验与批量上限、
 缓存 TTL/LRU、配置读写与 env 覆盖、`/state` 字段、路由 405/400/403、工具结果不含
 base64 / token。mock 场景包括 200、400、503（ready true/false）、504、507、连接拒绝、超时。
+
+P2 追加：朗读文本清洗（Markdown / 代码块 / `[QQ]` / 链接）、分段与 2 万字截断、
+multipart 解析、`/read` + `/audio` + 两个上传路由、路径穿越防护、真实 `fish.service`
+的分段合成与缓存回放、`client.js` 的加载与槽位注册冒烟。
 
 ## 目录
 
@@ -154,13 +182,15 @@ E:\dsh-fish-service\
 │  ├─ cache.js            # 产物落盘、TTL、LRU
 │  ├─ config.js           # 默认值、env 覆盖、原子写
 │  ├─ health.js           # 后台健康轮询（5s→10s→30s 退避）
-│  ├─ routes.js           # /dsh-fish-service/*
+│  ├─ routes.js           # /dsh-fish-service/*（含 P2 的 read/audio/transcribe/voice）
+│  ├─ speech.js           # 朗读文本清洗 + 分段（纯函数）
+│  ├─ upload.js           # multipart 解析、音频扩展名
 │  ├─ logger.js           # 内存环 + 落盘日志
-│  ├─ fs-util.js          # 原子写 / hash / 路径
+│  ├─ fs-util.js          # 原子写 / hash / 路径（含防穿越）
 │  └─ tools\              # 8 个工具，每个一个文件
-├─ client.js              # 设置页（React，无构建、无 CDN）
-├─ docs\                  # DESIGN / CONTRACT / DEPLOY / MIGRATION / P1
-└─ tests\                 # 8 个契约测试 + mock 公共件
+├─ client.js              # 设置页 + 朗读按钮 + 语音输入 + 自动朗读（React，无构建）
+├─ docs\                  # DESIGN / CONTRACT / DEPLOY / MIGRATION / P1 / P2
+└─ tests\                 # 11 个契约测试 + mock 公共件
 ```
 
 ## 已知限制（P1）
@@ -174,6 +204,9 @@ E:\dsh-fish-service\
 - `fish_translate` 的 `source='auto'` 只覆盖服务端支持的常见语种。
 - 设置页的能力列表来自最近一次探测；服务刚启动时可能需要手动点「测试连接」刷新。
 - 插件只监听 / 调用 `127.0.0.1`；不联网下载任何东西（依赖安装除外）。
+
+P2 的已知限制（音频附件降级、自动朗读时机、录音格式、插入位置等）见
+[`docs/P2.md` 第 10 节](docs/P2.md#10-已知限制)。
 
 更细的实现说明、与 `docs/CONTRACT.md` 的差异见 [`docs/P1.md`](docs/P1.md)。
 设计文档：[`docs/DESIGN.md`](docs/DESIGN.md)、[`docs/CONTRACT.md`](docs/CONTRACT.md)。

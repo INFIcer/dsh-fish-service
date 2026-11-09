@@ -171,10 +171,13 @@ export function makeRes() {
   return out
 }
 
-/** 造一个 req 替身（GET 或带 JSON body 的 POST）。 */
+/** 造一个 req 替身（GET 或带 JSON/multipart body 的 POST）。 */
 export async function makeReq({ method = 'GET', url = '/', headers = {}, body = undefined } = {}) {
   const { Readable } = await import('node:stream')
-  const req = Readable.from(body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))])
+  const 数据 = Buffer.isBuffer(body)
+    ? body
+    : Buffer.from(body === undefined ? '' : (typeof body === 'string' ? body : JSON.stringify(body)))
+  const req = Readable.from(body === undefined ? [] : [数据])
   req.method = method
   req.url = url
   req.headers = headers

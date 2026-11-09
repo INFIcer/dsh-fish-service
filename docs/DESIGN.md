@@ -810,6 +810,8 @@ apply
 
 ### P2 UI 入口
 
+> 状态：**已完成**（2026-11-09），实现与验收见 [`P2.md`](P2.md)。
+
 - 朗读按钮（`conversation.chat.assistant-actions`）；
 - 语音输入（`conversation.input.right` 优先，`left` 兜底；MediaRecorder + 插入/剪贴板降级）；
 - 自动朗读开关（`conversation.input.left`，默认关）；

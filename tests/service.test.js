@@ -384,6 +384,44 @@ test('config：get 脱敏；set 白名单、保存、警告、token 原样打码
   assert.equal(stack.api.config.get().baseUrl, before.baseUrl)
 })
 
+test('config：P2 朗读/语音字段可写，非法值给警告且不写', async (t) => {
+  const stack = await makeStack()
+  t.after(() => stack.close())
+
+  const 好 = await stack.api.config.set({
+    ttsSpeed: 1.25,
+    readMaxChars: 3000,
+    readSkipCode: false,
+    autoRead: true,
+    recordMime: 'wav',
+    rememberVoiceChoice: false,
+    asrLanguage: 'zh',
+  })
+  assert.equal(好.ok, true)
+  assert.deepEqual(好.applied.sort(), [
+    'asrLanguage', 'autoRead', 'readMaxChars', 'readSkipCode',
+    'recordMime', 'rememberVoiceChoice', 'ttsSpeed',
+  ])
+  assert.equal(stack.store.current.ttsSpeed, 1.25)
+  assert.equal(stack.store.current.readMaxChars, 3000)
+  assert.equal(stack.store.current.readSkipCode, false)
+  assert.equal(stack.store.current.autoRead, true)
+  assert.equal(stack.store.current.recordMime, 'wav')
+  assert.equal(stack.store.current.rememberVoiceChoice, false)
+  assert.equal(stack.store.current.asrLanguage, 'zh')
+
+  const 坏 = await stack.api.config.set({
+    ttsSpeed: 3,
+    readMaxChars: 10,
+    recordMime: 'mp3',
+    asrLanguage: 'ko',
+  })
+  assert.equal(坏.ok, true)
+  assert.deepEqual(坏.applied, [])
+  assert.equal(坏.warnings.length, 4)
+  assert.equal(stack.store.current.ttsSpeed, 1.25)
+})
+
 test('ensureReady：tts 通过；preload 只对 tts 生效；未知能力 / 缺模型返回结构化错误', async (t) => {
   const stack = await makeStack({
     handler: basicHandler({
