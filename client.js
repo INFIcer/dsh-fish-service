@@ -634,7 +634,7 @@ select.fish-select option:checked {
 
       const 标题 = 合成中 ? '正在合成…（再次点击取消）'
         : 播放中 ? '停止朗读'
-          : 偏好态.在线 === false ? '朗读这条回复（本地 AI 服务未启动）'
+          : 偏好态.在线 === false ? '朗读这条回复（本地 AI 未启动）'
             : '朗读这条回复'
 
       const 错误 = 播放态.messageId === messageId && 播放态.phase === 'error' ? 播放态.error : ''
@@ -1141,7 +1141,7 @@ select.fish-select option:checked {
 
       const 标题 = 录音中 ? `正在录音 ${格式时间(态.seconds)}，点击结束`
         : 请求中 ? '正在请求麦克风…'
-          : 离线 ? '语音输入（本地 AI 服务未启动）'
+          : 离线 ? '语音输入（本地 AI 未启动）'
             : '语音输入（点击开始录音）'
 
       return h(React.Fragment, null,
@@ -1308,7 +1308,7 @@ select.fish-select option:checked {
             }, h('span', { style: { fontSize: 15, lineHeight: 1 } }, '×')) : null),
           行,
           h('div', { className: 'fish-panel-dim', style: { marginTop: 8 } },
-            偏好态.在线 === false ? '本地 AI 服务未启动，转写与朗读暂不可用，请先启动服务。' : '录音保存在本机，不会上传。')))
+            偏好态.在线 === false ? '本地 AI 未启动，转写与朗读暂不可用，请先启动。' : '录音保存在本机，不会上传。')))
     }
 
     // ---------------- 自动朗读开关（输入框左侧） ----------------
@@ -1662,7 +1662,7 @@ select.fish-select option:checked {
         })),
         能力表.tts && !能力表.tts.available && 能力表.tts.reason === 'service_down'
           ? h('div', { style: { ...S.danger, marginTop: 8 } },
-              '服务未启动，请先启动本地 AI 服务。')
+              '未启动，请先启动本地 AI。')
           : null)
 
       const 音色选项 = [{ value: 配置.ttsVoice || 'dafeiyu', label: 配置.ttsVoice || 'dafeiyu' }]
@@ -1673,7 +1673,7 @@ select.fish-select option:checked {
       const 服务块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '服务连接'),
         行('服务地址', 输入(配置.baseUrl, (v) => 改('baseUrl', v), 'http://127.0.0.1:7880'),
-          '本地 AI 服务的地址，其它插件也使用这里的设置。'),
+          '本地 AI 的地址，其它插件也使用这里的设置。'),
         行('请求超时（毫秒）', h('input', {
           style: S.small, type: 'number', min: 1000, max: 1800000,
           value: 配置.requestTimeoutMs ?? 180000,
