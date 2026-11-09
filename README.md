@@ -131,7 +131,7 @@ HTTP 映射：连接失败 → `service_down`；507 → `vram_exhausted`；503�
 
 ```powershell
 npm install     # 只装 @deepseek-ai/schemastery@3.18.4
-npm test        # 8 个测试文件，90 项断言
+npm test        # 8 个测试文件，91 项断言
 npm run check   # 所有 lib/*.js 与 client.js 的 node --check
 ```
 
