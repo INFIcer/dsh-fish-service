@@ -166,3 +166,39 @@ test('prepareSpeech：只有代码块时没有可朗读内容', () => {
   assert.equal(r.chunks.length, 0)
   assert.equal(r.codeBlocks, 1)
 })
+
+test('分段：换行是边界（两段都够长）', () => {
+  const { chunks } = splitForSpeech('第一段内容写长一点，别太短。\n第二段内容也写长一点，单独成段。', 2000)
+  assert.equal(chunks.length, 2)
+  assert.ok(chunks[0].startsWith('第一段'))
+  assert.ok(chunks[1].startsWith('第二段'))
+})
+
+test('分段：不足 10 字的碎片不单独成段（并到下一段）', () => {
+  const { chunks } = splitForSpeech('嗯。今天天气不错，我们出去走走吧。', 2000)
+  assert.equal(chunks.length, 1)
+  assert.equal(chunks[0], '嗯。今天天气不错，我们出去走走吧。')
+})
+
+test('分段：末尾的碎片并到上一段', () => {
+  const { chunks } = splitForSpeech('前面这句写得足够长了可以成为一段。\n好。', 2000)
+  assert.equal(chunks.length, 1)
+  assert.ok(chunks[0].endsWith('好。'))
+})
+
+test('分段：句末标点即分段边界', () => {
+  const 文 = '这是第一句话，写得足够长可以单独成段。这是第二句话，同样足够长能单独成段。'
+  const { chunks } = splitForSpeech(文, 2000)
+  assert.equal(chunks.length, 2)
+  assert.equal(chunks[0], '这是第一句话，写得足够长可以单独成段。')
+  assert.equal(chunks[1], '这是第二句话，同样足够长能单独成段。')
+})
+
+test('分段：单句超过 maxChars 才按字数硬切', () => {
+  const 文 = '没有标点的一长串文字'.repeat(40) // 480 字，无标点
+  const { chunks } = splitForSpeech(文, 200)
+  assert.ok(chunks.length >= 2)
+  for (const 块 of chunks) assert.ok(块.length <= 200)
+  assert.equal(chunks.join(''), 文)
+})
+

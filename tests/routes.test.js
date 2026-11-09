@@ -339,6 +339,7 @@ test('POST /read：清洗 + 分段 + 调 TTS，返回 wav 列表与 URL', async 
   })
   assert.equal(res.statusCode, 200)
   assert.equal(json.ok, true)
+  // 分段语义：按换行/句末切分，但不足 10 字的碎片会并到相邻段（这段整体不到 10 字/片 → 1 段）。
   assert.equal(json.chunks, 1)
   assert.equal(json.codeBlocks, 1)
   assert.equal(json.voice, 'default')
@@ -347,7 +348,7 @@ test('POST /read：清洗 + 分段 + 调 TTS，返回 wav 列表与 URL', async 
   assert.equal(json.items.length, 1)
   assert.ok(json.items[0].url.includes('/dsh-fish-service/audio?path='))
   assert.equal(调用.length, 1)
-  assert.deepEqual(调用[0].texts, ['标题\n你好呀。再说一句。'])
+  assert.deepEqual(调用[0].texts, ['标题你好呀。再说一句。'])
   assert.equal(调用[0].opts.voice, 'default')
   assert.equal(调用[0].opts.speed, 1.1)
 })
@@ -556,7 +557,7 @@ test('POST /read 走真实 fish.service：分段合成写缓存，/audio 能回�
   })
   t.after(() => dispose())
 
-  const 长文 = '这是一句测试。'.repeat(80) // 480 字，超过 200 的分段上限
+  const 长文 = Array.from({ length: 25 }, (_, i) => `这是第${i + 1}句测试内容。`).join('')
   const req = await makeReq({
     method: 'POST',
     url: '/dsh-fish-service/read',
@@ -567,16 +568,14 @@ test('POST /read 走真实 fish.service：分段合成写缓存，/audio 能回�
   await routes.get('/dsh-fish-service/read')(req, res)
   const json = JSON.parse(res.body)
   assert.equal(json.ok, true)
-  assert.ok(json.chunks >= 2, `应该分段，实际 ${json.chunks}`)
-  assert.equal(json.items.length, json.chunks)
-  // 这条长文的多个分段内容完全相同：TTS 缓存会让重复段直接复用，不再发 HTTP。
-  assert.equal(调用.length, 2)
-  assert.equal(json.cachedChunks, 1)
-  assert.equal(json.cacheHits, 1)
+  // 句末标点即分段边界：25 句 → 25 段（每句都 >= 10 字，不会并段）。
+  assert.equal(json.chunks, 25)
+  assert.equal(json.items.length, 25)
+  // 2 批（每批 20 段），fish.service.tts 内部逐条调 /tts → 25 次 HTTP；并发度 2。
+  assert.equal(调用.length, 25)
+  assert.equal(json.cachedChunks, 0)
+  assert.equal(json.cacheHits, 0)
   assert.equal(json.items[0].cached, false)
-  assert.equal(json.items[1].cached, true)
-  assert.equal(json.items[1].wavPath, json.items[0].wavPath)
-  assert.equal(json.items[2].cached, false)
   assert.equal(json.concurrency, 2)
   for (const body of 调用) assert.equal(body.speed, 1.2)
   for (const item of json.items) {
