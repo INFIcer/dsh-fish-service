@@ -1,0 +1,60 @@
+{
+  "name": "dsh-fish-service",
+  "version": "0.1.0",
+  "description": "DSH 本地 AI 服务门面：fish.service（Cordis 服务）+ 8 个 Agent 工具 + 设置页。唯一知道 localai 服务地址的地方。",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/host.js",
+  "exports": {
+    ".": "./lib/host.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "docs",
+    "tests"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test tests/errors.test.js tests/config.test.js tests/capabilities.test.js tests/client.test.js tests/cache.test.js tests/tools.test.js tests/service.test.js tests/routes.test.js",
+    "test:watch": "node --test --watch tests/",
+    "check": "node --check lib/host.js && node --check lib/service-api.js && node --check lib/client.js && node --check lib/config.js && node --check lib/capabilities.js && node --check lib/errors.js && node --check lib/cache.js && node --check lib/health.js && node --check lib/logger.js && node --check lib/fs-util.js && node --check lib/routes.js && node --check lib/tools/index.js && node --check lib/tools/shared.js && node --check lib/tools/tts.js && node --check lib/tools/asr.js && node --check lib/tools/translate.js && node --check lib/tools/separate.js && node --check lib/tools/vision.js && node --check lib/tools/media.js && node --check lib/tools/job.js && node --check lib/tools/status.js && node --check client.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "slots"
+      ],
+      "external": [
+        "react"
+      ]
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.2-rc.1": "compatible"
+      }
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.4"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "local-ai",
+    "tts",
+    "asr",
+    "translate",
+    "fish-service"
+  ]
+}

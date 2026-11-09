@@ -1,0 +1,5 @@
+# dsh-fish-service：DSH 的本地 AI 服务门面（TTS / ASR / 翻译 / 分离 / 视觉）。
+# 这一层只负责把插件插进 profile；具体配置在 <DSH 家目录>/fish-service-config.json。
+- insert:
+    - id: fish-service
+      name: 'dsh-fish-service'
