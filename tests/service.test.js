@@ -83,6 +83,109 @@ test('tts：批量写缓存、只返回路径与指标、同 seed 复用缓存',
   assert.equal(second.items[0].wavPath, first.items[0].wavPath)
 })
 
+test('tts：不传 seed 也查缓存；换音色/语速不命中；统计单调增长、清空后重新合成', async (t) => {
+  const sent = []
+  const handler = basicHandler({
+    '/tts': (req, res, rec) => {
+      const body = 解析体(rec)
+      sent.push(body)
+      sendBuffer(res, 200, Buffer.from(`RIFF-${body.text}-${body.voice}-${body.speed ?? ''}`), {
+        'content-type': 'audio/wav',
+        'x-seed': '11',
+        'x-language': 'zh',
+      })
+    },
+  })
+  const stack = await makeStack({ handler })
+  t.after(() => stack.close())
+
+  const 一 = await stack.api.tts('同一句话', { voice: 'dafeiyu', speed: 1.2 })
+  assert.equal(一.items[0].cached, false)
+  assert.equal(一.items[0].seed, 11) // 不传 seed 时服务端随机，用响应头 x-seed 回填
+  assert.equal(sent.length, 1)
+  const 统计0 = stack.api.cache.stats()
+  assert.deepEqual(
+    { hits: 统计0.hits, misses: 统计0.misses, hitRate: 统计0.hitRate, kind: 统计0.kind },
+    { hits: 0, misses: 1, hitRate: 0, kind: 'tts' },
+  )
+  assert.equal(统计0.files, 1)
+  assert.ok(统计0.bytes > 0)
+
+  const 二 = await stack.api.tts('同一句话', { voice: 'dafeiyu', speed: 1.2 })
+  assert.equal(sent.length, 1) // 第二次不再发 HTTP
+  assert.equal(二.items[0].cached, true)
+  assert.equal(二.items[0].ms, 0)
+  assert.equal(二.items[0].wavPath, 一.items[0].wavPath)
+  assert.equal(二.items[0].bytes, 一.items[0].bytes)
+
+  const 统计1 = stack.api.cache.stats()
+  assert.equal(统计1.hits, 1)
+  assert.equal(统计1.misses, 1)
+  assert.equal(统计1.hitRate, 0.5)
+
+  const 三 = await stack.api.tts('同一句话', { voice: 'dafeiyu', speed: 1.2 })
+  assert.equal(三.items[0].cached, true)
+  const 统计2 = stack.api.cache.stats()
+  assert.ok(统计2.hitRate > 统计1.hitRate) // 命中率单调增长
+  assert.equal(统计2.files, 1) // 同一个文件不重复计数
+
+  // 换音色 / 换语速 → key 变了，必须重新合成
+  const 换音色 = await stack.api.tts('同一句话', { voice: 'default', speed: 1.2 })
+  assert.equal(换音色.items[0].cached, false)
+  const 换语速 = await stack.api.tts('同一句话', { voice: 'dafeiyu', speed: 1.5 })
+  assert.equal(换语速.items[0].cached, false)
+  assert.equal(sent.length, 3)
+  assert.equal(stack.api.cache.stats().misses, 3)
+  assert.equal(stack.api.cache.stats().files, 3)
+  assert.equal(sent[2].speed, 1.5)
+
+  // 清空 TTS 缓存 → 再合成是 miss；文件账本清零，历史命中计数保留
+  const 清 = stack.api.cache.clear({ kind: 'tts' })
+  assert.equal(清.ok, true)
+  assert.equal(清.kind, 'tts')
+  assert.equal(清.files, 3)
+  assert.equal(stack.api.cache.stats().files, 0)
+  assert.equal(stack.api.cache.stats().hits, 2)
+  assert.equal(stack.api.cache.stats().misses, 3)
+
+  const 清后 = await stack.api.tts('同一句话', { voice: 'dafeiyu', speed: 1.2 })
+  assert.equal(清后.items[0].cached, false)
+  assert.equal(sent.length, 4)
+  assert.equal(stack.api.cache.stats().files, 1)
+
+  await assert.rejects(async () => stack.api.cache.clear({ kind: 'nope' }), (e) => e.code === 'bad_request')
+  const 清理 = stack.api.cache.cleanup()
+  assert.equal(清理.ok, true)
+  assert.equal(typeof 清理.expired, 'number')
+  assert.equal(typeof 清理.lru, 'number')
+})
+
+test('tts：固定 seed 和自动（无 seed）的缓存互不串用', async (t) => {
+  const sent = []
+  const stack = await makeStack({
+    handler: basicHandler({
+      '/tts': (req, res, rec) => {
+        const body = 解析体(rec)
+        sent.push(body)
+        sendBuffer(res, 200, Buffer.from(`RIFF-${body.seed ?? 'auto'}`), {
+          'content-type': 'audio/wav',
+          'x-seed': String(body.seed ?? 77),
+        })
+      },
+    }),
+  })
+  t.after(() => stack.close())
+
+  const 自动 = await stack.api.tts('一句话', { voice: 'dafeiyu', speed: 1 })
+  const 固定 = await stack.api.tts('一句话', { voice: 'dafeiyu', speed: 1, seed: 5 })
+  assert.equal(自动.items[0].cached, false)
+  assert.equal(固定.items[0].cached, false)
+  assert.equal(sent.length, 2)
+  assert.equal(固定.items[0].wavPath === 自动.items[0].wavPath, false)
+  assert.equal(自动.items[0].seed, 77) // 服务端 x-seed 回填
+  assert.equal(固定.items[0].seed, 5)
+})
+
 test('tts：21 条 / 空文本 / 超长 / speed / language 都返回 bad_request', async (t) => {
   const stack = await makeStack()
   t.after(() => stack.close())
@@ -391,6 +494,7 @@ test('config：P2 朗读/语音字段可写，非法值给警告且不写', asyn
   const 好 = await stack.api.config.set({
     ttsSpeed: 1.25,
     readMaxChars: 3000,
+    readConcurrency: 3,
     readSkipCode: false,
     autoRead: true,
     recordMime: 'wav',
@@ -399,11 +503,12 @@ test('config：P2 朗读/语音字段可写，非法值给警告且不写', asyn
   })
   assert.equal(好.ok, true)
   assert.deepEqual(好.applied.sort(), [
-    'asrLanguage', 'autoRead', 'readMaxChars', 'readSkipCode',
+    'asrLanguage', 'autoRead', 'readConcurrency', 'readMaxChars', 'readSkipCode',
     'recordMime', 'rememberVoiceChoice', 'ttsSpeed',
   ])
   assert.equal(stack.store.current.ttsSpeed, 1.25)
   assert.equal(stack.store.current.readMaxChars, 3000)
+  assert.equal(stack.store.current.readConcurrency, 3)
   assert.equal(stack.store.current.readSkipCode, false)
   assert.equal(stack.store.current.autoRead, true)
   assert.equal(stack.store.current.recordMime, 'wav')
@@ -413,13 +518,15 @@ test('config：P2 朗读/语音字段可写，非法值给警告且不写', asyn
   const 坏 = await stack.api.config.set({
     ttsSpeed: 3,
     readMaxChars: 10,
+    readConcurrency: 9,
     recordMime: 'mp3',
     asrLanguage: 'ko',
   })
   assert.equal(坏.ok, true)
   assert.deepEqual(坏.applied, [])
-  assert.equal(坏.warnings.length, 4)
+  assert.equal(坏.warnings.length, 5)
   assert.equal(stack.store.current.ttsSpeed, 1.25)
+  assert.equal(stack.store.current.readConcurrency, 3)
 })
 
 test('ensureReady：tts 通过；preload 只对 tts 生效；未知能力 / 缺模型返回结构化错误', async (t) => {

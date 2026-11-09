@@ -33,12 +33,18 @@ window.__ModuleLoader__.load({
       .then((r) => r.json())
       .catch(() => null)
 
-    const post = (path, body) => fetch(B + path, {
+    const post = (path, body, opts = {}) => fetch(B + path, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body || {}),
+      // 停止朗读时用 AbortController 掐掉还没回来的 /read/segment 请求。
+      ...(opts.signal ? { signal: opts.signal } : {}),
     }).then((r) => r.json().catch(() => null))
-      .catch((error) => ({ ok: false, code: 'upstream_error', hint: String(error?.message || error) }))
+      .catch((error) => ({
+        ok: false,
+        code: error?.name === 'AbortError' ? 'canceled' : 'upstream_error',
+        hint: String(error?.message || error),
+      }))
 
     /** multipart 上传；不要手动设 content-type，浏览器自己带 boundary。 */
     const postForm = (path, form) => fetch(B + path, { method: 'POST', body: form })
@@ -133,6 +139,12 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------- 朗读播放器（全局只有一个） ----------------
+    //
+    // 流式朗读（P2 性能修复）：
+    //   1. POST /read/plan 立刻拿分段计划（不合成）；
+    //   2. 按顺序请求 /read/segment，拿到第 1 段就开始播，同时预取下一段；
+    //   3. 切换消息 / 再点一次 = stop()：递增代次 + abort 未完成的 segment 请求。
+    // 这样长文不用等全部合成，首段出声明显更早；同一段重复朗读由服务端缓存直接命中。
 
     const 播放 = {
       态: 造store({ phase: 'idle', messageId: '', error: '', index: 0, total: 0 }),
@@ -140,9 +152,12 @@ window.__ModuleLoader__.load({
       预取: null,
       序号: 0,
       消息: '',
+      中止: null,
 
       stop(错误 = '') {
         this.序号 += 1
+        try { this.中止?.abort() } catch { /* 已经结束 */ }
+        this.中止 = null
         for (const 音频 of [this.音频, this.预取]) {
           if (!音频) continue
           try { 音频.pause() } catch { /* 已经结束 */ }
@@ -154,46 +169,90 @@ window.__ModuleLoader__.load({
         this.态.set({ phase: 'idle', messageId: '', error: 错误, index: 0, total: 0 })
       },
 
-      /** 合成并顺序播放；同一条消息再点一次 = 停止。 */
+      /** 流式合成并顺序播放；同一条消息再点一次 = 停止。 */
       async 合成并播放(messageId, 文本, 配置) {
         this.stop()
         const 代 = ++this.序号
+        const 中止 = typeof AbortController === 'function' ? new AbortController() : null
+        this.中止 = 中止
         this.消息 = messageId
         this.态.set({ phase: 'synth', messageId, error: '', index: 0, total: 0 })
-        const r = await post('/read', {
+
+        const plan = await post('/read/plan', {
           text: 文本,
           voice: 配置.ttsVoice,
           speed: 配置.ttsSpeed,
           maxChars: 配置.readMaxChars,
           skipCodeBlocks: 配置.readSkipCode !== false,
-        })
+        }, { signal: 中止?.signal })
         if (代 !== this.序号) return
-        if (!r || !r.ok) {
-          this.态.set({ phase: 'error', messageId, error: (r && r.hint) || '合成失败，稍后重试。', index: 0, total: 0 })
+        if (!plan || !plan.ok) {
+          this.中止 = null
+          this.态.set({ phase: 'error', messageId, error: (plan && plan.hint) || '分段失败，稍后重试。', index: 0, total: 0 })
           return
         }
-        const items = Array.isArray(r.items) ? r.items.filter((x) => x && x.wavPath) : []
-        if (!items.length) {
-          this.态.set({ phase: 'error', messageId, error: '合成没有返回音频。', index: 0, total: 0 })
+
+        const 段们 = Array.isArray(plan.segments) ? plan.segments.filter((x) => x && typeof x.text === 'string') : []
+        if (!段们.length) {
+          this.中止 = null
+          this.态.set({ phase: 'error', messageId, error: '这段没有可朗读的文字。', index: 0, total: 0 })
           return
         }
-        const 提示 = r.truncated ? '（文本太长，只朗读了前一部分）' : ''
-        this.态.set({ phase: 'playing', messageId, error: '', hint: 提示, index: 1, total: items.length })
-        for (let i = 0; i < items.length; i++) {
-          if (代 !== this.序号) return
-          this.态.set((旧) => ({ ...旧, phase: 'playing', index: i + 1, total: items.length }))
-          this.预取 = items[i + 1] ? new Audio(音频地址(items[i + 1].wavPath)) : null
-          if (this.预取) {
-            try { this.预取.preload = 'auto'; this.预取.load() } catch { /* 忽略 */ }
+        const 总段 = 段们.length
+        const 提示 = plan.truncated ? '（文本太长，只朗读了前一部分）' : ''
+
+        // 每段只请求一次；任务表让「预取」和「正在播的下一段」复用同一个请求。
+        const 任务 = new Map()
+        const 要段 = (i) => {
+          if (!任务.has(i)) {
+            任务.set(i, post('/read/segment', {
+              index: Number.isInteger(段们[i].index) ? 段们[i].index : i,
+              total: 总段,
+              text: 段们[i].text,
+              ...(plan.voice ? { voice: plan.voice } : {}),
+              ...(plan.speed ? { speed: plan.speed } : {}),
+            }, { signal: 中止?.signal }))
           }
-          const 错误 = await this.播一段(items[i], 代)
+          return 任务.get(i)
+        }
+
+        // 第 1 段和第 2 段一起发出去：第 1 段一到就播，第 2 段在后台合成。
+        // 第 1 段回来之前保持「合成中」转圈；回来后才切到「播放中 1/N」。
+        void 要段(0)
+        if (总段 > 1) void 要段(1)
+
+        for (let i = 0; i < 总段; i++) {
+          if (代 !== this.序号) return
+          const r = await 要段(i)
+          if (代 !== this.序号) return
+          if (!r || !r.ok) {
+            try { 中止?.abort() } catch { /* 已经结束 */ }
+            this.中止 = null
+            this.态.set({
+              phase: 'error',
+              messageId,
+              error: (r && r.hint) || '这一段合成失败，稍后重试。',
+              index: 0,
+              total: 0,
+            })
+            return
+          }
+          this.态.set((旧) => ({ ...旧, phase: 'playing', error: '', hint: 提示, index: i + 1, total: 总段 }))
+          // 播放当前段之前先把下一段请求发出去，利用播放时间做预取。
+          if (i + 1 < 总段) void 要段(i + 1)
+          const 错误 = await this.播一段({ wavPath: r.wavPath }, 代)
           if (代 !== this.序号) return
           if (错误) {
+            try { 中止?.abort() } catch { /* 已经结束 */ }
+            this.中止 = null
             this.态.set((旧) => ({ ...旧, phase: 'error', error: 错误, index: 0, total: 0 }))
             return
           }
         }
-        if (代 === this.序号) this.态.set({ phase: 'idle', messageId: '', error: '', hint: 提示, index: 0, total: 0 })
+        if (代 === this.序号) {
+          this.中止 = null
+          this.态.set({ phase: 'idle', messageId: '', error: '', hint: 提示, index: 0, total: 0 })
+        }
       },
 
       播一段(item, 代) {
@@ -1403,6 +1462,7 @@ select.fish-select option:checked {
       const [忙, 设忙] = React.useState(false)
       const [说, 设说] = React.useState('')
       const [日志, 设日志] = React.useState(null)
+      const [缓存统计, 设缓存统计] = React.useState(null)
 
       const 拉 = async () => {
         const s = await get('/state')
@@ -1425,7 +1485,6 @@ select.fish-select option:checked {
         const t = setInterval(拉, 5000)
         return () => clearInterval(t)
       }, [脏])
-
       const 配置 = (态 && 态.config) || {}
       const 健康 = (态 && 态.health) || {}
       const 缓存 = (态 && 态.cache) || {}
@@ -1470,6 +1529,41 @@ select.fish-select option:checked {
         设忙(false)
         设日志(r && r.ok ? r.lines : null)
       }
+
+      const 拉缓存统计 = async () => {
+        const r = await get('/cache/stats')
+        if (r && r.ok) 设缓存统计(r)
+      }
+
+      const 清缓存 = async () => {
+        设忙(true)
+        const r = await post('/cache/clear', { kind: 'tts' })
+        设忙(false)
+        if (r && r.ok) {
+          const mb = Math.round(((r.bytes || 0) / 1024 / 1024) * 10) / 10
+          设说(`已清空 TTS 缓存（${r.files || 0} 个文件，释放 ${mb} MB）。下次朗读会重新合成。`)
+        } else {
+          设说(`清缓存失败：${(r && r.hint) || '未知错误'}`)
+        }
+        await 拉()
+        await 拉缓存统计()
+      }
+
+      const 清过期 = async () => {
+        设忙(true)
+        const r = await post('/cache/cleanup', {})
+        设忙(false)
+        if (r && r.ok) {
+          const mb = Math.round(((r.bytesFreed || 0) / 1024 / 1024) * 10) / 10
+          设说(`已清理：过期 ${r.expired || 0} 个、LRU ${r.lru || 0} 个，释放 ${mb} MB。`)
+        } else {
+          设说(`清理失败：${(r && r.hint) || '未知错误'}`)
+        }
+        await 拉()
+        await 拉缓存统计()
+      }
+
+      React.useEffect(() => { void 拉缓存统计() }, [])
 
       if (!态) {
         return h('div', { className: 'fish-service-settings', style: S.wrap },
@@ -1538,6 +1632,11 @@ select.fish-select option:checked {
           value: 配置.readMaxChars ?? 2000,
           onChange: (e) => 改('readMaxChars', Number(e.target.value)),
         }), '超过就分段合成（200~5000）。消息总长超过 2 万字只朗读前 2 万字。'),
+        行('朗读并发度', h('input', {
+          style: S.small, type: 'number', min: 1, max: 4, step: 1,
+          value: 配置.readConcurrency ?? 2,
+          onChange: (e) => 改('readConcurrency', Number(e.target.value)),
+        }), '分段合成时最多几批同时请求（1~4，默认 2）。调 1 = 完全串行；显存/队列紧张时调低更稳。会等首段合成完就开始播，不需要等全文。'),
         行('自动朗读', 勾(配置.autoRead === true, (v) => 改('autoRead', v)),
           '默认关。开启后新回复的最终文本会自动念出来（不读工具调用/思考/代码块）。'))
 
@@ -1559,11 +1658,33 @@ select.fish-select option:checked {
         h('div', { style: { ...S.dim, marginTop: 2 } },
           '录音最长 5 分钟、最大 25MB；音频只走本机 127.0.0.1。'))
 
+      const 缓存块 = h('div', { style: S.card },
+        h('div', { style: S.h2 }, '缓存'),
+        h('div', { style: S.dim },
+          `产物目录：${缓存.dir || 配置.cacheDir || '—'}｜当前 ${缓存.mb || 0} MB、${缓存.files || 0} 个文件`
+          + `｜上限 ${缓存.maxMb || 2048} MB｜TTL ${缓存.ttlHours || 72} 小时`),
+        h('div', { style: { ...S.dim, marginTop: 4 } },
+          'TTS：' + (缓存统计
+            ? `${缓存统计.files || 0} 个音频 / ${(Math.round(((缓存统计.bytes || 0) / 1024 / 1024) * 10) / 10)} MB；`
+              + `命中 ${缓存统计.hits || 0} 次、未命中 ${缓存统计.misses || 0} 次；`
+              + `命中率 ${Math.round((缓存统计.hitRate || 0) * 1000) / 10}%（本次 DSH 运行以来）`
+            : '统计读取中…')),
+        h('div', { style: { ...S.dim, marginTop: 2 } },
+          '相同文本 + 音色 + 语速 + 情绪 会复用音频；换音色或语速会重新合成。命中时 /tts 返回 cached:true、ms:0。'),
+        h('div', { style: { display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' } },
+          h('button', { type: 'button', style: S.btn, onClick: 清缓存, disabled: 忙 }, '清空 TTS 缓存'),
+          h('button', { type: 'button', style: S.btn, onClick: 清过期, disabled: 忙 }, '清理过期缓存（TTL/LRU）')))
+
       const 动作块 = h('div', { style: S.card },
         h('div', { style: { display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap' } },
           h('button', { type: 'button', style: S.btnOn, onClick: 存, disabled: 忙 }, 忙 ? '处理中…' : '保存设置'),
           h('button', { type: 'button', style: S.btn, onClick: 测试, disabled: 忙 }, '测试连接'),
-          h('button', { type: 'button', style: S.btn, onClick: 拉, disabled: 忙 }, '刷新')),
+          h('button', {
+            type: 'button',
+            style: S.btn,
+            onClick: () => { void 拉(); void 拉缓存统计() },
+            disabled: 忙,
+          }, '刷新')),
         h('div', { style: { ...S.dim, marginTop: 6 } },
           '保存后立即生效（朗读/语音按钮下一次点击就用新设置）；不用重启 DSH。'))
 
@@ -1596,6 +1717,7 @@ select.fish-select option:checked {
         朗读块,
         语音块,
         服务块,
+        缓存块,
         动作块,
         (说 ? h('div', { style: { ...(说.includes('失败') ? S.danger : S.ok), marginTop: 6 } }, 说) : null),
         日志块)

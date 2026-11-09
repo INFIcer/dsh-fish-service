@@ -7,7 +7,8 @@ import { join } from 'node:path'
 import { registerRoutes } from '../lib/routes.js'
 import { CacheStore } from '../lib/cache.js'
 import { makeError } from '../lib/errors.js'
-import { makeReq, makeRes, makeTempDir } from './helpers.js'
+import { prepareSpeech } from '../lib/speech.js'
+import { makeReq, makeRes, makeTempDir, makeStack, basicHandler, sendBuffer } from './helpers.js'
 
 const 时间 = '2026-11-09T12:00:00.000Z'
 const 能力表 = {
@@ -125,13 +126,18 @@ function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = n
   return { routes, api, 配置, configStore, capabilities, 调用, dispose, call }
 }
 
-test('注册 10 条约定路由；全部 kind=exact', () => {
+test('注册 15 条约定路由；全部 kind=exact', () => {
   const env = 搭环境()
   assert.deepEqual([...env.routes.keys()].sort(), [
     '/dsh-fish-service/audio',
+    '/dsh-fish-service/cache/cleanup',
+    '/dsh-fish-service/cache/clear',
+    '/dsh-fish-service/cache/stats',
     '/dsh-fish-service/health',
     '/dsh-fish-service/logs',
     '/dsh-fish-service/read',
+    '/dsh-fish-service/read/plan',
+    '/dsh-fish-service/read/segment',
     '/dsh-fish-service/save',
     '/dsh-fish-service/state',
     '/dsh-fish-service/test',
@@ -563,7 +569,15 @@ test('POST /read 走真实 fish.service：分段合成写缓存，/audio 能回�
   assert.equal(json.ok, true)
   assert.ok(json.chunks >= 2, `应该分段，实际 ${json.chunks}`)
   assert.equal(json.items.length, json.chunks)
-  assert.equal(调用.length, json.chunks)
+  // 这条长文的多个分段内容完全相同：TTS 缓存会让重复段直接复用，不再发 HTTP。
+  assert.equal(调用.length, 2)
+  assert.equal(json.cachedChunks, 1)
+  assert.equal(json.cacheHits, 1)
+  assert.equal(json.items[0].cached, false)
+  assert.equal(json.items[1].cached, true)
+  assert.equal(json.items[1].wavPath, json.items[0].wavPath)
+  assert.equal(json.items[2].cached, false)
+  assert.equal(json.concurrency, 2)
   for (const body of 调用) assert.equal(body.speed, 1.2)
   for (const item of json.items) {
     assert.ok(existsSync(item.wavPath))
@@ -607,4 +621,406 @@ test('POST /read：超过 20 段时按 20 条一批调 TTS（契约上限）', a
   assert.equal(json.chunks, 40)
   assert.equal(json.truncated, true)
   assert.deepEqual(批大小, [20, 20])
+})
+
+// ---------------- P2 性能：分段并发 / 流式朗读 / 缓存路由 ----------------
+
+/** 20 个段落、每段 2 句 → maxChars=200 时正好 40 段（每句都够长，不会被合并）。 */
+function 造分段长文(段数 = 20) {
+  return Array.from({ length: 段数 }, (_未, i) => {
+    const 头 = `第${i}段`
+    return `${头}${'甲'.repeat(114)}。${头}后${'乙'.repeat(112)}。`
+  }).join('\n\n')
+}
+
+/** 用真实 stack 注册宿主路由，返回和 routes.test 里一样的 call 接口。 */
+function 挂真实路由(stack) {
+  const routes = new Map()
+  const ctx = {
+    webServer: {
+      register: (定义) => { routes.set(定义.path, 定义.handler); return () => routes.delete(定义.path) },
+    },
+  }
+  const dispose = registerRoutes({
+    ctx,
+    api: stack.api,
+    configStore: stack.store,
+    capabilities: stack.capabilities,
+    cache: stack.cache,
+    logger: stack.logger,
+    version: '0.1.0',
+  })
+  const call = async (path, { method = 'GET', body, headers = {} } = {}) => {
+    const handler = routes.get(path)
+    assert.ok(handler, `没有注册 ${path}`)
+    const req = await makeReq({ method, url: path, body, headers: { host: 'x', ...headers } })
+    const res = makeRes()
+    await handler(req, res)
+    let json = null
+    try { json = res.json() } catch { json = null }
+    return { res, json }
+  }
+  return { routes, dispose, call }
+}
+
+/** 按文本→期望段序生成 wavPath，用来验证并发后顺序没串。 */
+function 段序映射(正文) {
+  const 期望 = prepareSpeech(正文, { maxChars: 200 }).chunks
+  const 序号 = new Map(期望.map((文本, i) => [文本, i]))
+  return { 期望, 序号 }
+}
+
+test('POST /read：批间有限并发 ≤ readConcurrency，结果按段序拼接', async () => {
+  const 正文 = 造分段长文()
+  const { 期望, 序号 } = 段序映射(正文)
+  assert.equal(期望.length, 40)
+
+  const 活跃 = { now: 0, peak: 0 }
+  const 批大小 = []
+  const env = 搭环境({
+    配置补丁: { readConcurrency: 2 },
+    apiOverrides: {
+      tts: async (texts) => {
+        活跃.now += 1
+        活跃.peak = Math.max(活跃.peak, 活跃.now)
+        批大小.push(texts.length)
+        await new Promise((r) => setTimeout(r, 25))
+        活跃.now -= 1
+        return {
+          ok: true,
+          items: texts.map((文本) => ({
+            wavPath: `C:\\cache\\tts\\s${序号.get(文本)}.wav`,
+            ms: 1, voice: 'dafeiyu', seed: 1, bytes: 10, cached: false,
+          })),
+          ms: 1,
+        }
+      },
+    },
+  })
+
+  const { res, json } = await env.call('/dsh-fish-service/read', {
+    method: 'POST',
+    headers: { host: 'x' },
+    body: { text: 正文, maxChars: 200 },
+  })
+  assert.equal(res.statusCode, 200)
+  assert.equal(json.ok, true)
+  assert.equal(json.chunks, 40)
+  assert.equal(json.concurrency, 2)
+  assert.equal(json.cachedChunks, 0)
+  assert.deepEqual(批大小.slice().sort((a, b) => a - b), [20, 20])
+  assert.equal(活跃.peak, 2) // 两批确实同时在跑
+  assert.ok(活跃.peak <= 2) // 且不超过配置的并发度
+  for (let i = 0; i < 40; i++) {
+    assert.equal(json.items[i].wavPath, `C:\\cache\\tts\\s${i}.wav`, `第 ${i} 段顺序错了`)
+    assert.equal(json.items[i].chars, 期望[i].length)
+  }
+})
+
+test('POST /read：readConcurrency=1 时完全串行（并发峰值 1）', async () => {
+  const 正文 = 造分段长文()
+  const 活跃 = { now: 0, peak: 0 }
+  const env = 搭环境({
+    配置补丁: { readConcurrency: 1 },
+    apiOverrides: {
+      tts: async (texts) => {
+        活跃.now += 1
+        活跃.peak = Math.max(活跃.peak, 活跃.now)
+        await new Promise((r) => setTimeout(r, 10))
+        活跃.now -= 1
+        return {
+          ok: true,
+          items: texts.map((_文本, i) => ({ wavPath: `C:\\cache\\tts\\x${i}.wav`, ms: 1, voice: 'x', bytes: 1 })),
+          ms: 1,
+        }
+      },
+    },
+  })
+  const { json } = await env.call('/dsh-fish-service/read', {
+    method: 'POST', headers: { host: 'x' }, body: { text: 正文, maxChars: 200 },
+  })
+  assert.equal(json.ok, true)
+  assert.equal(json.chunks, 40)
+  assert.equal(json.concurrency, 1)
+  assert.equal(活跃.peak, 1)
+})
+
+test('POST /read：某批失败时降级串行重试该批，成功后标记 degraded 且顺序不变', async () => {
+  const 正文 = 造分段长文()
+  const { 期望, 序号 } = 段序映射(正文)
+  let 第0批次数 = 0
+  const 批大小 = []
+  const env = 搭环境({
+    配置补丁: { readConcurrency: 2 },
+    apiOverrides: {
+      tts: async (texts) => {
+        批大小.push(texts.length)
+        if (texts[0] === 期望[0]) {
+          第0批次数 += 1
+          if (第0批次数 === 1) throw makeError('service_down', { hint: '本地 AI 服务没在运行。' })
+        }
+        await new Promise((r) => setTimeout(r, 10))
+        return {
+          ok: true,
+          items: texts.map((文本) => ({
+            wavPath: `C:\\cache\\tts\\s${序号.get(文本)}.wav`,
+            ms: 1, voice: 'dafeiyu', seed: 1, bytes: 10, cached: false,
+          })),
+          ms: 1,
+        }
+      },
+    },
+  })
+  const { json } = await env.call('/dsh-fish-service/read', {
+    method: 'POST', headers: { host: 'x' }, body: { text: 正文, maxChars: 200 },
+  })
+  assert.equal(json.ok, true)
+  assert.equal(json.degraded, true)
+  assert.equal(第0批次数, 2) // 第一次并发失败 + 一次串行重试
+  assert.equal(批大小.length, 3) // 两批并发 + 重试失败那批
+  for (let i = 0; i < 40; i++) {
+    assert.equal(json.items[i].wavPath, `C:\\cache\\tts\\s${i}.wav`)
+  }
+})
+
+test('POST /read：降级重试仍失败 → 200 + ok:false，hint 带并发/降级提示', async () => {
+  const 正文 = 造分段长文()
+  const { 期望 } = 段序映射(正文)
+  let 第0批次数 = 0
+  const env = 搭环境({
+    配置补丁: { readConcurrency: 2 },
+    apiOverrides: {
+      tts: async (texts) => {
+        if (texts[0] === 期望[0]) {
+          第0批次数 += 1
+          throw makeError('service_down', { hint: '本地 AI 服务没在运行。' })
+        }
+        return {
+          ok: true,
+          items: texts.map((_文本, i) => ({ wavPath: `C:\\cache\\tts\\ok${i}.wav`, ms: 1, voice: 'x', bytes: 1 })),
+          ms: 1,
+        }
+      },
+    },
+  })
+  const { res, json } = await env.call('/dsh-fish-service/read', {
+    method: 'POST', headers: { host: 'x' }, body: { text: 正文, maxChars: 200 },
+  })
+  assert.equal(res.statusCode, 200)
+  assert.equal(json.ok, false)
+  assert.equal(json.code, 'service_down')
+  assert.equal(第0批次数, 2)
+  assert.match(json.hint, /并发/)
+  assert.match(json.hint, /降级串行重试/)
+})
+
+test('POST /read/plan：立即返回分段计划，不调用 TTS；参数校验齐全', async () => {
+  let tts调用 = 0
+  const env = 搭环境({
+    apiOverrides: {
+      tts: async () => {
+        tts调用 += 1
+        throw new Error('plan 不应调用 TTS')
+      },
+    },
+  })
+  const 正文 = 造分段长文()
+  const 期望 = prepareSpeech(正文, { maxChars: 200 })
+
+  const ok = await env.call('/dsh-fish-service/read/plan', {
+    method: 'POST',
+    headers: { host: 'x' },
+    body: { text: 正文, maxChars: 200, voice: 'default', speed: 1.1 },
+  })
+  assert.equal(ok.res.statusCode, 200)
+  assert.equal(ok.json.ok, true)
+  assert.equal(ok.json.segments.length, 40)
+  assert.equal(ok.json.chars, 期望.chars)
+  assert.equal(ok.json.codeBlocks, 0)
+  assert.equal(ok.json.truncated, false)
+  assert.equal(ok.json.voice, 'default')
+  assert.equal(ok.json.speed, 1.1)
+  assert.equal(ok.json.maxChars, 200)
+  assert.equal(ok.json.segments[0].index, 0)
+  assert.equal(ok.json.segments[39].index, 39)
+  assert.equal(ok.json.segments[0].text, 期望.chunks[0])
+  assert.equal(ok.json.segments[0].chars, 期望.chunks[0].length)
+  assert.equal(tts调用, 0)
+
+  // 20000 字 → 40 段截断，且不合成
+  const 长 = await env.call('/dsh-fish-service/read/plan', {
+    method: 'POST', headers: { host: 'x' }, body: { text: '字'.repeat(20000), maxChars: 200 },
+  })
+  assert.equal(长.json.ok, true)
+  assert.equal(长.json.segments.length, 40)
+  assert.equal(长.json.truncated, true)
+  assert.equal(tts调用, 0)
+
+  const 空 = await env.call('/dsh-fish-service/read/plan', {
+    method: 'POST', headers: { host: 'x' }, body: { text: '   ' },
+  })
+  assert.equal(空.res.statusCode, 400)
+  assert.equal(空.json.code, 'bad_request')
+
+  const 代码 = await env.call('/dsh-fish-service/read/plan', {
+    method: 'POST', headers: { host: 'x' }, body: { text: '```\ncode\n```' },
+  })
+  assert.equal(代码.res.statusCode, 400)
+  assert.match(代码.json.hint, /代码块/)
+
+  const 语速 = await env.call('/dsh-fish-service/read/plan', {
+    method: 'POST', headers: { host: 'x' }, body: { text: '你好', speed: 9 },
+  })
+  assert.equal(语速.res.statusCode, 400)
+  assert.match(语速.json.hint, /语速/)
+
+  const 错方法 = await env.call('/dsh-fish-service/read/plan')
+  assert.equal(错方法.res.statusCode, 405)
+})
+
+test('POST /read/segment：只合成一段，返回 index/wavPath/url/ms/cached/bytes；参数校验', async () => {
+  const 调用 = []
+  const env = 搭环境({
+    apiOverrides: {
+      tts: async (texts, opts) => {
+        调用.push({ texts, opts })
+        return {
+          ok: true,
+          items: [{ wavPath: 'C:\\cache\\tts\\one.wav', ms: 0, voice: 'default', bytes: 123, cached: true }],
+          ms: 1,
+        }
+      },
+    },
+  })
+  const ok = await env.call('/dsh-fish-service/read/segment', {
+    method: 'POST',
+    headers: { host: 'x' },
+    body: { index: 1, total: 3, text: '第二段文字。', voice: 'default', speed: 1.2 },
+  })
+  assert.equal(ok.res.statusCode, 200)
+  assert.equal(ok.json.ok, true)
+  assert.equal(ok.json.index, 1)
+  assert.equal(ok.json.wavPath, 'C:\\cache\\tts\\one.wav')
+  assert.ok(ok.json.url.includes('/dsh-fish-service/audio?path='))
+  assert.equal(ok.json.ms, 0)
+  assert.equal(ok.json.cached, true)
+  assert.equal(ok.json.bytes, 123)
+  assert.equal(ok.json.total, 3)
+  assert.equal(ok.json.voice, 'default')
+  assert.equal(调用.length, 1)
+  assert.deepEqual(调用[0].texts, ['第二段文字。'])
+  assert.equal(调用[0].opts.voice, 'default')
+  assert.equal(调用[0].opts.speed, 1.2)
+
+  const 负 = await env.call('/dsh-fish-service/read/segment', {
+    method: 'POST', headers: { host: 'x' }, body: { index: -1, text: 'x' },
+  })
+  assert.equal(负.res.statusCode, 400)
+  assert.match(负.json.hint, /index/)
+
+  const 越界 = await env.call('/dsh-fish-service/read/segment', {
+    method: 'POST', headers: { host: 'x' }, body: { index: 3, total: 3, text: 'x' },
+  })
+  assert.equal(越界.res.statusCode, 400)
+  assert.match(越界.json.hint, /index/)
+
+  const 超总段 = await env.call('/dsh-fish-service/read/segment', {
+    method: 'POST', headers: { host: 'x' }, body: { index: 0, total: 41, text: 'x' },
+  })
+  assert.equal(超总段.res.statusCode, 400)
+  assert.match(超总段.json.hint, /total/)
+
+  const 空文本 = await env.call('/dsh-fish-service/read/segment', {
+    method: 'POST', headers: { host: 'x' }, body: { index: 0, total: 1, text: '   ' },
+  })
+  assert.equal(空文本.res.statusCode, 400)
+
+  const 语速 = await env.call('/dsh-fish-service/read/segment', {
+    method: 'POST', headers: { host: 'x' }, body: { index: 0, text: 'x', speed: 9 },
+  })
+  assert.equal(语速.res.statusCode, 400)
+  assert.match(语速.json.hint, /语速/)
+
+  const 错方法 = await env.call('/dsh-fish-service/read/segment')
+  assert.equal(错方法.res.statusCode, 405)
+  assert.equal(调用.length, 1) // 非法参数一个都没合成
+})
+
+test('流式朗读走真实 fish.service：plan 不合成；segment 命中缓存；缓存统计/清空/清理', async (t) => {
+  const sent = []
+  const stack = await makeStack({
+    handler: basicHandler({
+      '/tts': (req, res, rec) => {
+        sent.push(JSON.parse(rec.body.toString('utf8') || '{}'))
+        sendBuffer(res, 200, Buffer.from(`RIFF-${sent.length}`), {
+          'content-type': 'audio/wav',
+          'x-seed': '7',
+          'x-language': 'zh',
+        })
+      },
+    }),
+  })
+  t.after(() => stack.close())
+  const { call, dispose } = 挂真实路由(stack)
+  t.after(() => dispose())
+
+  const 正文 = `第一段${'甲'.repeat(130)}。\n\n第二段${'乙'.repeat(130)}。`
+  const plan = await call('/dsh-fish-service/read/plan', {
+    method: 'POST',
+    body: { text: 正文, maxChars: 200, voice: 'dafeiyu', speed: 1 },
+  })
+  assert.equal(plan.json.ok, true)
+  assert.equal(plan.json.segments.length, 2)
+  assert.equal(plan.json.voice, 'dafeiyu')
+  assert.equal(plan.json.speed, 1)
+  assert.equal(sent.length, 0) // plan 不合成
+
+  const 第一 = await call('/dsh-fish-service/read/segment', {
+    method: 'POST',
+    body: { index: 0, total: 2, text: plan.json.segments[0].text, voice: plan.json.voice, speed: plan.json.speed },
+  })
+  assert.equal(第一.json.ok, true)
+  assert.equal(第一.json.index, 0)
+  assert.equal(第一.json.cached, false)
+  assert.ok(existsSync(第一.json.wavPath))
+  assert.ok(第一.json.url.includes('/dsh-fish-service/audio?path='))
+  assert.equal(sent.length, 1)
+
+  const 再播 = await call('/dsh-fish-service/read/segment', {
+    method: 'POST',
+    body: { index: 0, total: 2, text: plan.json.segments[0].text, voice: plan.json.voice, speed: plan.json.speed },
+  })
+  assert.equal(再播.json.ok, true)
+  assert.equal(再播.json.cached, true)
+  assert.equal(再播.json.ms, 0)
+  assert.equal(再播.json.wavPath, 第一.json.wavPath)
+  assert.equal(sent.length, 1) // 第二次没有发 HTTP
+
+  const 统计 = await call('/dsh-fish-service/cache/stats')
+  assert.equal(统计.json.ok, true)
+  assert.equal(统计.json.kind, 'tts')
+  assert.equal(统计.json.hits, 1)
+  assert.equal(统计.json.misses, 1)
+  assert.equal(统计.json.hitRate, 0.5)
+  assert.equal(统计.json.files, 1)
+
+  const 清 = await call('/dsh-fish-service/cache/clear', { method: 'POST', body: { kind: 'tts' } })
+  assert.equal(清.json.ok, true)
+  assert.equal(清.json.kind, 'tts')
+  assert.equal(清.json.files, 1)
+  const 清后统计 = await call('/dsh-fish-service/cache/stats')
+  assert.equal(清后统计.json.files, 0)
+  assert.equal(清后统计.json.hits, 1) // 历史命中计数不因清缓存而重置
+
+  const 清理 = await call('/dsh-fish-service/cache/cleanup', { method: 'POST', body: {} })
+  assert.equal(清理.json.ok, true)
+  assert.equal(typeof 清理.json.expired, 'number')
+  assert.equal(typeof 清理.json.lru, 'number')
+
+  const 错Kind = await call('/dsh-fish-service/cache/clear', { method: 'POST', body: { kind: 'nope' } })
+  assert.equal(错Kind.res.statusCode, 400)
+  assert.equal(错Kind.json.code, 'bad_request')
+
+  const 错方法 = await call('/dsh-fish-service/cache/clear')
+  assert.equal(错方法.res.statusCode, 405)
 })

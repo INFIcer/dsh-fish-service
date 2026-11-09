@@ -35,15 +35,20 @@ dsh-fish-ops（P4，规划中；本仓库未实现）
 ## P2 做了什么（界面入口）
 
 - **消息朗读按钮**（`conversation.chat.assistant-actions`）：每条已定稿助手回复旁一个喇叭；
-  点击 → `POST /read` 清洗 + 分段 + 合成 → 浏览器按顺序播放；再点停止；切换消息停上一条。
+  点击 → `POST /read/plan` 立即拿分段 → 按顺序 `POST /read/segment`，第 1 段合成完就播，
+  同时预取下一段；再点停止；切换消息停上一条（并 abort 未完成的请求）。
   失败显示中文 hint，不白屏、不抛 JS 异常。
+- **TTS 缓存**：相同文本 + 音色 + 语速 + 情绪会复用音频（无 seed 也命中），第二次朗读 `cached:true`；
+  设置页可看命中率、清空 / 清理缓存。详见 [`docs/TTS_CACHE.md`](docs/TTS_CACHE.md)。
+- **分段并发**：`/read` 的批与批之间按 `readConcurrency`（默认 2，1~4）有限并发，失败自动降级串行重试。
 - **语音输入**（`conversation.input.right`）：麦克风录音（webm/opus 优先，退化 WAV）→
   结束时在输入框浮层里三选一：**转文字**（插到光标处）/ **保留语音**（存 `cacheDir/voice`，
   路径插进输入框）/ **取消**。录音上限 5 分钟、25MB；记住上次选择只做高亮。
 - **自动朗读开关**（`conversation.input.left`）：默认关；开关写入 `config.autoRead`。
-- **设置页**：在 P1 同一页里新增「朗读」「语音输入」两个分区。
+- **设置页**：在 P1 同一页里新增「朗读」「语音输入」「缓存」分区。
 
-细节、挂载点依据与手动验收步骤见 [`docs/P2.md`](docs/P2.md)。
+细节、挂载点依据与手动验收步骤见 [`docs/P2.md`](docs/P2.md)，
+缓存 / 并发 / 流式接口见 [`docs/TTS_CACHE.md`](docs/TTS_CACHE.md)。
 
 **P1/P2 不做**（按设计留给后续阶段）：一键安装 / 内嵌 WebUI（P3）、组合链路 `dsh-fish-ops`（P4）、
 `vision_watch` 的 URL 下载输入。
@@ -83,6 +88,7 @@ Get-Content C:\Users\Administrator\.dsh\profiles\desktop\package.json -Raw
 | `ttsSpeed` | `1.0` | 朗读语速 0.5~2.0 |
 | `autoRead` | `false` | 自动朗读最终回复（默认关） |
 | `readMaxChars` | `2000` | 朗读单段最大字数 200~5000 |
+| `readConcurrency` | `2` | 朗读分段合成的批间并发度 1~4（1 = 完全串行） |
 | `readSkipCode` | `true` | 朗读时去掉代码块（关=念「代码块，共 N 行」） |
 | `recordMime` | `"auto"` | 录音格式 auto/webm/wav |
 | `rememberVoiceChoice` | `true` | 记住语音输入上次选择（只做高亮） |
@@ -134,7 +140,12 @@ Get-Content C:\Users\Administrator\.dsh\profiles\desktop\package.json -Raw
 | POST | `/test` | `{timeoutMs?}` 探测服务连通 |
 | GET | `/logs` | `?lines=1..1000`，插件内存日志（最近 200 行） |
 | GET | `/voices` | 服务端音色列表；服务没起时 `ok:false` + 空数组 |
-| POST | `/read` | `{text, voice?, speed?, maxChars?, skipCodeBlocks?}` → `{ok, wavPath, ms, items[], chunks, chars, codeBlocks, truncated}` |
+| POST | `/read` | `{text, voice?, speed?, maxChars?, skipCodeBlocks?}` → `{ok, wavPath, ms, items[], chunks, chars, codeBlocks, truncated, concurrency, cachedChunks, cacheHits, degraded?}`（一次全合成，兼容保留） |
+| POST | `/read/plan` | `{text, maxChars?, voice?, speed?, skipCodeBlocks?}` → `{ok, segments:[{index,text,chars}], chars, codeBlocks, codeLines, truncated, voice, speed, maxChars}`（不合成） |
+| POST | `/read/segment` | `{index, total?, text, voice?, speed?}` → `{ok, index, wavPath, url, ms, cached, bytes, voice, speed, total?}`（单段合成，自动命中缓存） |
+| GET | `/cache/stats` | `{ok, kind:'tts', files, bytes, hits, misses, hitRate}` |
+| POST | `/cache/clear` | `{kind?}` → `{ok, kind, files, bytes, kinds}`；省略 kind 清产物但保留 `voice` |
+| POST | `/cache/cleanup` | 调 `cache.cleanup()` → `{ok, expired, lru, bytesFreed, scanned}` |
 | GET | `/audio?path=` | 以 `audio/*` 返回 cacheDir 里的音频（防目录穿越） |
 | POST | `/transcribe-upload` | multipart 录音 → `{ok, text, ms, elapsedMs?, language?}` |
 | POST | `/voice-upload` | multipart 录音 → 存 `<cacheDir>/voice`，返回 `{ok, path, bytes, mime}` |
@@ -155,7 +166,7 @@ HTTP 映射：连接失败 → `service_down`；507 → `vram_exhausted`；503�
 
 ```powershell
 npm install     # 只装 @deepseek-ai/schemastery@3.18.4
-npm test        # 11 个测试文件，124 项断言
+npm test        # 11 个测试文件，134 项断言
 npm run check   # 所有 lib/*.js 与 client.js 的 node --check
 ```
 
@@ -166,6 +177,11 @@ base64 / token。mock 场景包括 200、400、503（ready true/false）、504�
 P2 追加：朗读文本清洗（Markdown / 代码块 / `[QQ]` / 链接）、分段与 2 万字截断、
 multipart 解析、`/read` + `/audio` + 两个上传路由、路径穿越防护、真实 `fish.service`
 的分段合成与缓存回放、`client.js` 的加载与槽位注册冒烟。
+
+性能修复追加（P2.1）：TTS 缓存命中（无 seed 也算 key）、换音色/语速不命中、
+命中统计与 `/cache/clear|cleanup`、`/read` 并发峰值 ≤ `readConcurrency` 且顺序正确、
+失败降级串行重试、`/read/plan` 不合成、`/read/segment` 单段命中缓存与参数校验。
+细节见 [`docs/TTS_CACHE.md`](docs/TTS_CACHE.md)。
 
 ## 目录
 
@@ -189,7 +205,7 @@ E:\dsh-fish-service\
 │  ├─ fs-util.js          # 原子写 / hash / 路径（含防穿越）
 │  └─ tools\              # 8 个工具，每个一个文件
 ├─ client.js              # 设置页 + 朗读按钮 + 语音输入 + 自动朗读（React，无构建）
-├─ docs\                  # DESIGN / CONTRACT / DEPLOY / MIGRATION / P1 / P2
+├─ docs\                  # DESIGN / CONTRACT / DEPLOY / MIGRATION / P1 / P2 / TTS_CACHE
 └─ tests\                 # 11 个契约测试 + mock 公共件
 ```
 
@@ -207,6 +223,9 @@ E:\dsh-fish-service\
 
 P2 的已知限制（音频附件降级、自动朗读时机、录音格式、插入位置等）见
 [`docs/P2.md` 第 10 节](docs/P2.md#10-已知限制)。
+
+TTS 缓存的已知限制（命中统计按进程、并发同 key 竞态、缓存不区分 TTS language 等）见
+[`docs/TTS_CACHE.md` 第 8 节](docs/TTS_CACHE.md#8-已知限制)。
 
 更细的实现说明、与 `docs/CONTRACT.md` 的差异见 [`docs/P1.md`](docs/P1.md)。
 设计文档：[`docs/DESIGN.md`](docs/DESIGN.md)、[`docs/CONTRACT.md`](docs/CONTRACT.md)。

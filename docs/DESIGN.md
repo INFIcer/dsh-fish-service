@@ -530,7 +530,11 @@ export function apply(ctx, pluginConfig) {
 
 ### 8.7 产物与缓存
 
-- TTS：`<cache>/tts/<sha16(text+voice+speed+emotion+seed)>-<ts>.wav`；`seed` 随机时不复用，避免“同文不同音”被缓存。
+- TTS：`<cache>/tts/<sha16(text+voice+speed+emotion+seed|"auto")>-<ts>.wav`；
+  不传 seed 用 `"auto"` 占位，同一组参数（文本+音色+语速+情绪）复用最近一份音频；
+  显式 seed 仍按 seed 隔离。命中统计在服务层内存里维护（P2.1，见 `docs/TTS_CACHE.md`）。
+- 朗读分段合成：批与批之间按 `readConcurrency`（默认 2，1~4）有限并发，失败批降级串行重试；
+  流式朗读 `/read/plan` + `/read/segment` 让首段合成完就播。
 - 分离：`<cache>/separate/<jobid>/<stem>.wav`；`stems` 原样指向缓存。
 - 关键帧：`<cache>/vision/<jobid>/frame_*.jpg`；`frames[].path` 指向缓存。
 - ASR 上传临时文件：`<cache>/tmp/<uuid>.<ext>`，请求结束即删；不长期保存用户音频。

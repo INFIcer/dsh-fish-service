@@ -780,7 +780,12 @@ interface InstallApi {
 | POST | `/config` | `{patch: {...}}` | 同 `fish.service.config.set` |
 | GET | `/voices` | — | `{ok, voices:[...]}` |
 | POST | `/tts` | `{text, voice?, speed?, language?, seed?}` | `audio/wav`（默认）或 `{ok, wavPath, id}`（`?mode=json`） |
-| POST | `/read` | `{text, voice?, speed?, maxChars?, skipCodeBlocks?}` | `{ok, wavPath, ms, items[{wavPath,url,ms,voice,bytes,chars}], chunks, chars, codeBlocks, truncated}`（P2） |
+| POST | `/read` | `{text, voice?, speed?, maxChars?, skipCodeBlocks?}` | `{ok, wavPath, ms, items[{wavPath,url,ms,voice,bytes,chars,cached}], chunks, chars, codeBlocks, truncated, concurrency, cachedChunks, cacheHits, degraded?}`（P2，一次全合成） |
+| POST | `/read/plan` | `{text, maxChars?, voice?, speed?, skipCodeBlocks?}` | `{ok, segments:[{index,text,chars}], chars, codeBlocks, codeLines, truncated, voice, speed, maxChars}`（P2.1，不合成） |
+| POST | `/read/segment` | `{index, total?, text, voice?, speed?}` | `{ok, index, wavPath, url, ms, cached, bytes, voice?, speed?, total?}`（P2.1，单段合成、自动命中缓存） |
+| GET | `/cache/stats` | — | `{ok, kind:"tts", files, bytes, hits, misses, hitRate}`（P2.1，服务层内存计数） |
+| POST | `/cache/clear` | `{kind?}` | `{ok, kind, files, bytes, kinds}`；省略 kind 清产物但保留 `voice`（P2.1） |
+| POST | `/cache/cleanup` | — | `{ok, expired, lru, bytesFreed, scanned}`（P2.1，调 `CacheStore.cleanup()`） |
 | GET | `/audio?path=` | — | `audio/*`；只允许 `cacheDir` 内的 `.wav/.webm/.ogg/.opus/.mp3/.m4a`（P2） |
 | POST | `/transcribe-upload` | multipart `file` + `durationMs?` + `language?` + `speaker?` | `{ok, text, ms, elapsedMs?, language?, speaker?}`（P2，临时文件请求结束即删） |
 | POST | `/voice-upload` | multipart `file` + `durationMs?` | `{ok, path, bytes, mime}`（P2，存 `cacheDir/voice`） |
@@ -859,6 +864,7 @@ interface InstallApi {
 | `ttsSpeed` | number | 1.0 | 0.5~2.0 | 朗读语速（P2） |
 | `autoRead` | bool | false | — | 自动朗读最终回复（P2） |
 | `readMaxChars` | int | 2000 | 200~5000 | 朗读单段最大字数（P2） |
+| `readConcurrency` | int | 2 | 1~4 | 朗读分段合成的批间并发度（P2.1；1 = 完全串行） |
 | `readSkipCode` | bool | true | — | 朗读时去掉代码块（P2） |
 | `recordMime` | enum | auto | auto/webm/wav | 语音输入录音格式（P2） |
 | `rememberVoiceChoice` | bool | true | — | 记住三选一上次选择（P2，只做高亮） |

@@ -109,6 +109,36 @@ test('cleanup 按 LRU 删到 cacheMaxMb 以内', () => {
   }
 })
 
+test('clear：省略 kind 清生成产物但保留 voice；指定 kind 只清那一类', () => {
+  const temp = makeTempDir()
+  try {
+    const cache = 造缓存(temp)
+    cache.saveBuffer('tts', Buffer.alloc(100), { ext: '.wav', ts: 1 })
+    cache.saveBuffer('tts', Buffer.alloc(50), { ext: '.wav', ts: 2 })
+    cache.saveBuffer('vision', Buffer.alloc(30), { ext: '.jpg', ts: 3 })
+    const 录音 = cache.saveBuffer('voice', Buffer.alloc(20), { ext: '.webm', ts: 4 })
+
+    const 全部 = cache.clear()
+    assert.deepEqual(全部.kinds.sort(), ['separate', 'tmp', 'tts', 'vision'])
+    assert.equal(全部.files, 3)
+    assert.equal(全部.bytes, 180)
+    assert.equal(cache.usage().byKind.tts, undefined)
+    assert.equal(existsSync(录音), true) // 用户明确保留的录音不动
+    assert.ok(existsSync(join(temp.dir, 'cache', 'tts'))) // 目录会重建
+
+    cache.saveBuffer('tts', Buffer.alloc(10), { ext: '.wav', ts: 5 })
+    const 只TTS = cache.clear('tts')
+    assert.deepEqual(只TTS.kinds, ['tts'])
+    assert.equal(只TTS.files, 1)
+    assert.equal(只TTS.bytes, 10)
+    assert.equal(existsSync(录音), true)
+
+    assert.throws(() => cache.clear('nope'), /未知缓存类型/)
+  } finally {
+    temp.cleanup()
+  }
+})
+
 test('目录不存在时 usage / cleanup 安全返回', () => {
   const temp = makeTempDir()
   try {
