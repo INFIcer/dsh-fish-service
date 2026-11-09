@@ -348,7 +348,7 @@ test('POST /read：清洗 + 分段 + 调 TTS，返回 wav 列表与 URL', async 
   assert.equal(json.items.length, 1)
   assert.ok(json.items[0].url.includes('/dsh-fish-service/audio?path='))
   assert.equal(调用.length, 1)
-  assert.deepEqual(调用[0].texts, ['标题你好呀。再说一句。'])
+  assert.deepEqual(调用[0].texts, ['标题。你好呀。再说一句。'])
   assert.equal(调用[0].opts.voice, 'default')
   assert.equal(调用[0].opts.speed, 1.1)
 })
