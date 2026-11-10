@@ -154,6 +154,20 @@ window.__ModuleLoader__.load({
       return { ...配置项, autoReadSessions: 表 }
     }
 
+    /** 后台朗读：旧配置没有该字段、或值无法识别时按开启；只有明确关闭才关。 */
+    function 读后台自动朗读(配置) {
+      const 值 = 配置 && typeof 配置 === 'object' ? 配置.autoReadInBackground : undefined
+      if (值 === false || 值 === 'false' || 值 === 0 || 值 === '0') return false
+      return true
+    }
+
+    /** 这条新回复是否自动朗读：会话开关必须开；页面在后台时还要「后台也自动朗读」开着。 */
+    function 是否自动朗读(配置, 会话键, 页面可见) {
+      if (!读会话自动朗读(配置, 会话键)) return false
+      if (页面可见) return true
+      return 读后台自动朗读(配置)
+    }
+
     // 有组件挂载时才轮询 /health（30 秒一次），没人看就不打扰服务。
     let 心跳 = null
     let 挂载数 = 0
@@ -599,6 +613,7 @@ select.fish-select option:checked {
       const 合成中 = 正在这条 && 播放态.phase === 'synth'
       const 播放中 = 正在这条 && 播放态.phase === 'playing'
       const 自动朗读 = 读会话自动朗读(偏好态.config, 会话键)
+      const 后台朗读 = 读后台自动朗读(偏好态.config)
 
       const 取文本 = () => 文本 || DOM取文本(按钮.current)
 
@@ -616,7 +631,8 @@ select.fish-select option:checked {
       }
 
       // 自动朗读：按当前会话的设置判断（未单独设置时回落到全局默认）；
-      // 只在「偏好已加载 + 这条是最后一轮 + 页面可见」时触发一次。
+      // 只在「偏好已加载 + 这条是最后一轮」时触发一次。窗口在后台时，
+      // 是否朗读由「后台也自动朗读」决定（默认开）。
       React.useEffect(() => {
         if (!挂载时已载入.current) return
         if (!偏好态.载入 || !自动朗读) return
@@ -627,10 +643,11 @@ select.fish-select option:checked {
         const 初始 = 会话初始末轮.get(会话键)
         if (Number.isFinite(轮次) && Number.isFinite(初始) && 轮次 <= 初始) return
         if (已自动朗读.has(messageId)) return
-        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+        const 页面可见 = typeof document === 'undefined' || document.visibilityState === 'visible'
+        if (!是否自动朗读(偏好态.config, 会话键, 页面可见)) return
         已自动朗读.add(messageId)
         void 播放.合成并播放(messageId, 文本, 偏好.get().config || {})
-      }, [文本, 位置, 偏好态.载入, 自动朗读, messageId, 会话键])
+      }, [文本, 位置, 偏好态.载入, 自动朗读, 后台朗读, messageId, 会话键])
 
       const 标题 = 合成中 ? '正在准备朗读，再点一次可取消'
         : 播放中 ? '停止朗读'
@@ -1882,6 +1899,12 @@ select.fish-select option:checked {
         else 设说(`打开文件夹失败：${(r && r.hint) || '请手动打开。'}`)
       }
 
+      const 打开管理界面 = async () => {
+        const r = await post('/open-webui', {})
+        if (r && r.ok) 设说('已在默认浏览器中打开管理界面。')
+        else 设说(`打开管理界面失败：${(r && r.hint) || '请稍后重试。'}`)
+      }
+
       if (!态) {
         return h('div', { className: 'fish-service-settings', style: S.wrap },
           h('div', { style: S.h1 }, '本地 AI'),
@@ -1929,6 +1952,16 @@ select.fish-select option:checked {
         }), { 问: '只影响一般请求；识别、分离与视觉分析另有更长的等待时间。' }),
         行('总开关', 勾(配置.enabled !== false, (v) => 改('enabled', v)),
           '关闭后朗读与语音输入都不可用。'),
+        行('管理界面',
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+            h('button', {
+              type: 'button',
+              style: S.btn,
+              onClick: 打开管理界面,
+              disabled: !在线 || 忙,
+            }, '打开管理界面'),
+            状态点(在线, 在线 ? '在线' : '离线')),
+          在线 ? '' : '先启动本地 AI 再打开。'),
         (态.envOverrides && 态.envOverrides.length)
           ? h('div', { style: { ...S.danger, marginTop: 4 } },
               `以下设置已由系统统一指定，在设置页修改不会生效：${态.envOverrides.map((名) => 配置中文[名] || '其他设置').join('、')}`)
@@ -1955,7 +1988,9 @@ select.fish-select option:checked {
           onChange: (e) => 改('readConcurrency', Number(e.target.value)),
         }), { 问: '数值越大出声越快、更占显存；卡顿时调低。' }),
         行('新会话默认自动朗读', 勾(配置.autoRead === true, (v) => 改('autoRead', v)),
-          { 问: '只影响未单独设置过的会话；每个会话可单独开关。' }))
+          { 问: '只影响未单独设置过的会话；每个会话可单独开关。' }),
+        行('后台也自动朗读', 勾(配置.autoReadInBackground !== false, (v) => 改('autoReadInBackground', v)),
+          '切到后台或最小化时仍会朗读，会占用扬声器，可能打扰他人。'))
 
       const 已选设备标识 = String(配置.recordDeviceId || '')
       const 设备选项 = [{ value: '', label: '系统默认' }]
@@ -2162,6 +2197,8 @@ select.fish-select option:checked {
     exports.__testing = {
       读会话自动朗读,
       写会话自动朗读,
+      读后台自动朗读,
+      是否自动朗读,
       会话自动朗读上限,
       会话键合法,
       构建录音约束,

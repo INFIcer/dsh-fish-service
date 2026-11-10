@@ -35,7 +35,7 @@ function 快照(overrides = {}) {
   }
 }
 
-function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = null, 配置补丁 = {}, 缓存 = null, spawn = null } = {}) {
+function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = null, 配置补丁 = {}, 缓存 = null, spawn = null, platform = 'win32' } = {}) {
   const 配置 = {
     baseUrl: 'http://127.0.0.1:7880',
     ttsVoice: 'dafeiyu',
@@ -118,6 +118,7 @@ function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = n
       调用.spawn.push({ 命令, 参数, 选项 })
       return { unref: () => {} }
     }),
+    platform,
   })
 
   const call = async (path, { method = 'GET', body, headers = {}, search = '' } = {}) => {
@@ -134,7 +135,7 @@ function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = n
   return { routes, api, 配置, configStore, capabilities, 调用, dispose, call }
 }
 
-test('注册 16 条约定路由；全部 kind=exact', () => {
+test('注册 17 条约定路由；全部 kind=exact', () => {
   const env = 搭环境()
   assert.deepEqual([...env.routes.keys()].sort(), [
     '/dsh-fish-service/audio',
@@ -144,6 +145,7 @@ test('注册 16 条约定路由；全部 kind=exact', () => {
     '/dsh-fish-service/health',
     '/dsh-fish-service/logs',
     '/dsh-fish-service/open-folder',
+    '/dsh-fish-service/open-webui',
     '/dsh-fish-service/read',
     '/dsh-fish-service/read/plan',
     '/dsh-fish-service/read/segment',
@@ -580,6 +582,106 @@ test('POST /open-folder：spawn 失败给可操作提示；缓存目录还不存
   } finally {
     temp.cleanup()
   }
+})
+test('POST /open-webui：在线时用系统默认浏览器打开管理界面，只拼 /ui，不等待子进程', async () => {
+  let 反引用 = 0
+  const env = 搭环境({
+    spawn: (命令, 参数, 选项) => {
+      env.调用.spawn.push({ 命令, 参数, 选项 })
+      return { unref: () => { 反引用 += 1 } }
+    },
+  })
+
+  const r = await env.call('/dsh-fish-service/open-webui', {
+    method: 'POST',
+    headers: { host: '127.0.0.1:10154' },
+  })
+  assert.equal(r.res.statusCode, 200)
+  assert.equal(r.json.ok, true)
+  assert.equal(env.调用.spawn.length, 1)
+  assert.equal(env.调用.spawn[0].命令, 'cmd.exe')
+  assert.deepEqual(env.调用.spawn[0].参数, ['/c', 'start', '', 'http://127.0.0.1:7880/ui'])
+  // detached + ignore：不占宿主的标准输入输出，也不阻塞路由。
+  assert.deepEqual(env.调用.spawn[0].选项, { detached: true, stdio: 'ignore' })
+  assert.equal(反引用, 1)
+
+  // baseUrl 末尾有斜杠时不出现 //ui。
+  const 斜杠 = 搭环境({ 配置补丁: { baseUrl: 'http://127.0.0.1:7880/' } })
+  await 斜杠.call('/dsh-fish-service/open-webui', {
+    method: 'POST',
+    headers: { host: '127.0.0.1:10154' },
+  })
+  assert.deepEqual(斜杠.调用.spawn.at(-1).参数, ['/c', 'start', '', 'http://127.0.0.1:7880/ui'])
+})
+
+test('POST /open-webui：服务离线不打开浏览器，给可操作提示', async () => {
+  const 探测 = []
+  const env = 搭环境({
+    refreshImpl: async (opts) => {
+      探测.push(opts)
+      return { ...快照(), ok: false, reachable: false, lastError: { code: 'service_down', hint: '连不上' } }
+    },
+  })
+
+  const r = await env.call('/dsh-fish-service/open-webui', {
+    method: 'POST',
+    headers: { host: '127.0.0.1:10154' },
+  })
+  assert.equal(r.res.statusCode, 200)
+  assert.equal(r.json.ok, false)
+  assert.equal(r.json.code, 'service_down')
+  assert.match(r.json.hint, /未启动/)
+  // 用 2 秒超时的强制探测，避免拿旧快照误判在线。
+  assert.deepEqual(探测[0], { force: true, timeoutMs: 2000 })
+  assert.equal(env.调用.spawn.length, 0)
+})
+
+test('POST /open-webui：非法 baseUrl 不打开浏览器；非 Windows 明确说不支持', async () => {
+  for (const 地址 of ['不是地址', 'ftp://127.0.0.1:7880', 'http://127.0.0.1:7880/&calc']) {
+    const env = 搭环境({ 配置补丁: { baseUrl: 地址 } })
+    const r = await env.call('/dsh-fish-service/open-webui', {
+      method: 'POST',
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(r.res.statusCode, 400, 地址)
+    assert.equal(r.json.ok, false)
+    assert.equal(r.json.code, 'bad_request')
+    assert.equal(env.调用.spawn.length, 0)
+  }
+
+  const 非Windows = 搭环境({ platform: 'linux' })
+  const r = await 非Windows.call('/dsh-fish-service/open-webui', {
+    method: 'POST',
+    headers: { host: '127.0.0.1:10154' },
+  })
+  assert.equal(r.res.statusCode, 200)
+  assert.equal(r.json.ok, false)
+  assert.equal(r.json.code, 'not_supported')
+  assert.match(r.json.hint, /暂不支持/)
+  assert.equal(非Windows.调用.spawn.length, 0)
+})
+
+test('POST /open-webui：spawn 失败给可操作提示；方法和来源也校验', async () => {
+  const env = 搭环境({
+    spawn: () => { throw new Error('cmd 启动失败') },
+  })
+  const 失败 = await env.call('/dsh-fish-service/open-webui', {
+    method: 'POST',
+    headers: { host: '127.0.0.1:10154' },
+  })
+  assert.equal(失败.res.statusCode, 500)
+  assert.equal(失败.json.code, 'upstream_error')
+  assert.match(失败.json.hint, /手动访问/)
+
+  const 错方法 = await env.call('/dsh-fish-service/open-webui')
+  assert.equal(错方法.res.statusCode, 405)
+
+  const 跨站 = await env.call('/dsh-fish-service/open-webui', {
+    method: 'POST',
+    headers: { host: '127.0.0.1:10154', origin: 'http://evil.example' },
+  })
+  assert.equal(跨站.res.statusCode, 403)
+  assert.equal(env.调用.spawn.length, 0)
 })
 
 

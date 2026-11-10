@@ -529,6 +529,28 @@ test('config：P2 朗读/语音字段可写，非法值给警告且不写', asyn
   assert.equal(stack.store.current.readConcurrency, 3)
 })
 
+test('config：后台也自动朗读可写；默认开，旧配置缺字段也是开', async (t) => {
+  const stack = await makeStack()
+  t.after(() => stack.close())
+
+  assert.equal(stack.api.config.get().autoReadInBackground, true)
+
+  const 关 = await stack.api.config.set({ autoReadInBackground: false })
+  assert.equal(关.ok, true)
+  assert.deepEqual(关.applied, ['autoReadInBackground'])
+  assert.equal(stack.store.current.autoReadInBackground, false)
+  assert.equal(stack.api.config.get().autoReadInBackground, false)
+
+  const 开 = await stack.api.config.set({ autoReadInBackground: true })
+  assert.deepEqual(开.applied, ['autoReadInBackground'])
+  assert.equal(stack.store.current.autoReadInBackground, true)
+
+  // 旧文件里没有这个字段：规范化后补成开。
+  const 旧 = await makeStack({ config: { autoReadInBackground: undefined } })
+  t.after(() => 旧.close())
+  assert.equal(旧.api.config.get().autoReadInBackground, true)
+})
+
 test('config：输入设备可写、空串表示系统默认；非法值只警告不写', async (t) => {
   const stack = await makeStack()
   t.after(() => stack.close())

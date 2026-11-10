@@ -33,7 +33,13 @@ function 载入客户端() {
   }))
 }
 
-const { 读会话自动朗读, 写会话自动朗读, 会话自动朗读上限 } = 载入客户端().__testing
+const {
+  读会话自动朗读,
+  写会话自动朗读,
+  读后台自动朗读,
+  是否自动朗读,
+  会话自动朗读上限,
+} = 载入客户端().__testing
 
 /** vm 里造出来的对象原型不同，比较前先转成当前 realm 的普通对象。 */
 const 纯 = (值) => JSON.parse(JSON.stringify(值))
@@ -109,4 +115,43 @@ test('会话切换：按钮状态随会话键重算', () => {
 
   // 切回 A 仍然只反映 A 自己的设置。
   assert.equal(读会话自动朗读(配置, 'session-a'), false)
+})
+
+test('读后台自动朗读：默认开，旧配置缺字段按开，只有明确关闭才关', () => {
+  assert.equal(读后台自动朗读({}), true)
+  assert.equal(读后台自动朗读({ autoReadInBackground: undefined }), true)
+  assert.equal(读后台自动朗读(null), true)
+  assert.equal(读后台自动朗读({ autoReadInBackground: true }), true)
+  for (const 值 of [false, 'false', 0, '0']) {
+    assert.equal(读后台自动朗读({ autoReadInBackground: 值 }), false)
+  }
+  // 无法识别的值按开（与配置规范化一致）。
+  assert.equal(读后台自动朗读({ autoReadInBackground: '乱写' }), true)
+})
+
+test('是否自动朗读：会话开关 × 后台开关 四种组合（前台不受后台设置影响）', () => {
+  for (const 会话开 of [true, false]) {
+    for (const 后台开 of [true, false]) {
+      const 配置 = { autoRead: 会话开, autoReadInBackground: 后台开 }
+      // 页面在前台：只看会话开关。
+      assert.equal(是否自动朗读(配置, 'session-a', true), 会话开,
+        `前台：会话=${会话开} 后台=${后台开}`)
+      // 页面在后台：两者都开才朗读。
+      assert.equal(是否自动朗读(配置, 'session-a', false), 会话开 && 后台开,
+        `后台：会话=${会话开} 后台=${后台开}`)
+    }
+  }
+
+  // 按会话单独开启 / 关闭时，仍以后台设置为前提。
+  const 单会话开 = { autoRead: false, autoReadSessions: { 'session-a': true }, autoReadInBackground: true }
+  assert.equal(是否自动朗读(单会话开, 'session-a', false), true)
+  assert.equal(是否自动朗读(单会话开, 'session-b', false), false)
+
+  const 单会话关 = { autoRead: true, autoReadSessions: { 'session-a': false }, autoReadInBackground: true }
+  assert.equal(是否自动朗读(单会话关, 'session-a', false), false)
+  assert.equal(是否自动朗读(单会话关, 'session-b', false), true)
+
+  // 旧配置（没有后台字段）：后台仍朗读。
+  assert.equal(是否自动朗读({ autoRead: true }, 'session-a', false), true)
+  assert.equal(是否自动朗读({ autoRead: true, autoReadInBackground: false }, 'session-a', false), false)
 })

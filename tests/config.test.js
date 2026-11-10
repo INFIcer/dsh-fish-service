@@ -42,6 +42,7 @@ test('默认配置符合 P1 契约', () => {
     assert.equal(c.ttsSpeed, 1)
     assert.equal(c.autoRead, false)
     assert.deepEqual(c.autoReadSessions, {})
+    assert.equal(c.autoReadInBackground, true)
     assert.equal(c.readMaxChars, 2000)
     assert.equal(c.readConcurrency, 2)
     assert.equal(c.readSkipCode, true)
@@ -255,6 +256,39 @@ test('autoReadSessions：默认空表；旧配置没有该字段时行为不变'
     assert.deepEqual(旧.autoReadSessions, {})
     // 只有全局默认时，所有会话都按它表现（回落由客户端完成）。
     assert.deepEqual(normalizeAutoReadSessions(undefined), { value: {}, warnings: [], valid: true })
+  } finally {
+    temp.cleanup()
+  }
+})
+
+test('autoReadInBackground：默认开；旧配置缺字段按开；明确关闭才关', () => {
+  const temp = makeTempDir()
+  try {
+    assert.equal(defaultConfig(temp.dir).autoReadInBackground, true)
+
+    // 旧配置没有该字段：按开启处理（以前后台不朗读，现在默认后台也朗读）。
+    const 旧 = normalizeConfig({ autoRead: true }, { homeDir: temp.dir })
+    assert.equal(旧.autoReadInBackground, true)
+
+    // true / 'true' / 1 / '1' 都算开；false / 'false' / 0 / '0' 算关。
+    for (const 值 of [true, 'true', 1, '1']) {
+      assert.equal(normalizeConfig({ autoReadInBackground: 值 }, { homeDir: temp.dir }).autoReadInBackground, true)
+    }
+    for (const 值 of [false, 'false', 0, '0']) {
+      assert.equal(normalizeConfig({ autoReadInBackground: 值 }, { homeDir: temp.dir }).autoReadInBackground, false)
+    }
+    // 无法识别的值：回落默认（开），不抛错。
+    assert.equal(normalizeConfig({ autoReadInBackground: '乱写' }, { homeDir: temp.dir }).autoReadInBackground, true)
+
+    // 持久化：保存后重读仍是关。
+    const store = new ConfigStore({ homeDir: temp.dir })
+    store.load({}, {})
+    store.save({ ...store.current, autoReadInBackground: false })
+    const raw = JSON.parse(readFileSync(join(temp.dir, 'fish-service-config.json'), 'utf8'))
+    assert.equal(raw.autoReadInBackground, false)
+    const again = new ConfigStore({ homeDir: temp.dir })
+    assert.equal(again.load({}, {}).autoReadInBackground, false)
+    assert.deepEqual(again.warnings, [])
   } finally {
     temp.cleanup()
   }
