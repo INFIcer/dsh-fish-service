@@ -456,7 +456,8 @@ test('POST /transcribe-upload：multipart 录音 → ASR 文本；临时文件�
         },
       },
     })
-    const 音频 = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02])
+    // 至少 1500 字节：服务端会把「录音数据过小」当成麦克风没采到声音直接拒绝。
+    const 音频 = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(2000, 0x11)])
     const 体 = 造表单('B1', [
       { name: 'file', filename: 'voice.webm', type: 'audio/webm', data: 音频 },
       { name: 'durationMs', data: '3200' },
@@ -1038,4 +1039,44 @@ test('流式朗读走真实 fish.service：plan 不合成；segment 命中缓存
 
   const 错方法 = await call('/dsh-fish-service/cache/clear')
   assert.equal(错方法.res.statusCode, 405)
+})
+
+test('POST /transcribe-upload：录音数据过小 / 太短 时给可操作提示', async () => {
+  const temp = makeTempDir()
+  try {
+    const cache = 真缓存(temp)
+    const env = 搭环境({
+      配置补丁: { cacheDir: join(temp.dir, 'cache') },
+      缓存: cache,
+      apiOverrides: { asr: async () => { throw new Error('不该被调用') } },
+    })
+
+    const 小音频 = Buffer.from([0x1a, 0x45, 0xdf, 0xa3])
+    const 体小 = 造表单('B2', [
+      { name: 'file', filename: 'voice.webm', type: 'audio/webm', data: 小音频 },
+      { name: 'durationMs', data: '3200' },
+    ])
+    const 小 = await env.call('/dsh-fish-service/transcribe-upload', {
+      method: 'POST',
+      headers: { host: 'x', 'content-type': 'multipart/form-data; boundary=B2' },
+      body: 体小,
+    })
+    assert.equal(小.res.statusCode, 400)
+    assert.match(小.json.hint, /没有采集到声音/)
+
+    const 正常音频 = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(2000, 0x11)])
+    const 体短 = 造表单('B3', [
+      { name: 'file', filename: 'voice.webm', type: 'audio/webm', data: 正常音频 },
+      { name: 'durationMs', data: '120' },
+    ])
+    const 短 = await env.call('/dsh-fish-service/transcribe-upload', {
+      method: 'POST',
+      headers: { host: 'x', 'content-type': 'multipart/form-data; boundary=B3' },
+      body: 体短,
+    })
+    assert.equal(短.res.statusCode, 400)
+    assert.match(短.json.hint, /录音太短/)
+  } finally {
+    temp.cleanup()
+  }
 })

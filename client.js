@@ -817,6 +817,8 @@ select.fish-select option:checked {
         startedAt: 0,
         seconds: 0,
         level: 0,
+        peak: 0,
+        micLabel: '',
         durationMs: 0,
         bytes: 0,
         mime: '',
@@ -928,6 +930,9 @@ select.fish-select option:checked {
         停流(流)
         return
       }
+      let 麦克风名 = ''
+      try { 麦克风名 = String(流.getAudioTracks?.()[0]?.label || '') } catch { 麦克风名 = '' }
+      语音.态.set((旧) => ({ ...旧, micLabel: 麦克风名 }))
       try {
         const 录音器 = await 创建录音器(流, 配置.recordMime || 'auto')
         if (代 !== 语音.代) {
@@ -940,7 +945,10 @@ select.fish-select option:checked {
         语音.态.set((旧) => ({ ...旧, phase: 'recording', startedAt: 开始, mime: 录音器.mime }))
         语音.计时器 = setInterval(() => {
           const 秒 = Math.floor((Date.now() - 开始) / 1000)
-          语音.态.set((旧) => (旧.phase === 'recording' ? { ...旧, seconds: 秒, level: 录音器.读取电平() } : 旧))
+          const 电平值 = 录音器.读取电平()
+        语音.态.set((旧) => (旧.phase === 'recording'
+          ? { ...旧, seconds: 秒, level: 电平值, peak: Math.max(旧.peak || 0, 电平值) }
+          : 旧))
           if (秒 >= 300) void 停止录音()
         }, 200)
       } catch (错误) {
@@ -983,6 +991,24 @@ select.fish-select option:checked {
       if (大小 < 600) {
         语音.态.set((旧) => ({ ...旧, phase: 'error', error: '未录到声音（录音过短），请点「重新录」重试。' }))
         安排关闭(8000)
+        return
+      }
+      if (!结果.blob || 结果.blob.size < 1500) {
+        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '没有采集到声音：录音数据过小。请检查麦克风是否可用，然后重试。' }))
+        return
+      }
+      if (时长 < 300) {
+        语音.态.set((旧) => ({ ...旧, phase: 'error', error: '录音太短，请多说几秒再停止。' }))
+        return
+      }
+      // 峰值一直贴着 0：麦克风多半被静音 / 选成了虚拟设备 / 系统输入源不对。
+      if ((态.peak || 0) < 0.008) {
+        语音.态.set((旧) => ({
+          ...旧,
+          phase: 'error',
+          error: `没有检测到声音${态.micLabel ? `（当前麦克风：${态.micLabel}）` : ''}。请检查系统声音设置里的输入设备是否被静音，或改为默认麦克风后重试。`,
+        }))
+        安排关闭(10000)
         return
       }
       语音.片段 = { blob: 结果.blob, mime: 结果.mime, durationMs: 时长 }
@@ -1062,6 +1088,7 @@ select.fish-select option:checked {
         return
       }
       const 插入成功 = 插入文本(inputActions, 文本)
+      const 录音秒数 = Math.max(0, Math.round(Number(语音.片段?.durationMs || 0) / 1000))
       记住选择('text')
       语音.片段 = null
       语音.插入位 = null
@@ -1074,7 +1101,7 @@ select.fish-select option:checked {
         choice: 'text',
         error: '',
         hint: 插入成功
-          ? `已转写 ${文本.length} 字，文字已插入输入框，可以继续编辑。`
+          ? `已转写 ${文本.length} 字（录音 ${录音秒数} 秒），文字已插入输入框，可以继续编辑。`
           : `已转写 ${文本.length} 字，但未能插入输入框；文字已尝试复制到剪贴板，也可点「重试插入」或「复制文字」。`,
       }))
       安排关闭(插入成功 ? 4500 : 12000)
@@ -1223,6 +1250,10 @@ select.fish-select option:checked {
           h('span', { style: { fontVariantNumeric: 'tabular-nums', fontWeight: 600 } }, 格式时间(态.seconds)),
           h(波形, { 电平: 态.level, 录音中: true }),
           h('span', { className: 'fish-panel-dim' }, `已录 ${(态.bytes / 1024 / 1024).toFixed(1)} MB · 最长 5 分钟`)))
+        行.push(h('div', { key: 'mic', className: 'fish-panel-dim', style: { marginTop: 4 } },
+          `输入音量 ${Math.min(100, Math.round((态.level || 0) * 100))}%`
+            + (态.micLabel ? ` · 麦克风：${态.micLabel}` : '')
+            + ((态.level || 0) < 0.01 && (态.seconds || 0) > 1 ? '（几乎没有声音，请检查麦克风）' : '')))
         行.push(h('div', { key: 'acts', className: 'fish-panel-row' },
           h('button', { type: 'button', className: 'fish-btn', 'data-primary': '1', onClick: () => void 停止录音() }, '停止并选择'),
           h('button', { type: 'button', className: 'fish-btn', onClick: 取消录音 }, '取消录音')))
