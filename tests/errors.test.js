@@ -49,8 +49,11 @@ test('503 + capabilityReady=false → model_missing，不是 upstream_error', ()
   })
   assert.equal(e.code, 'model_missing')
   assert.equal(e.retryable, false)
-  assert.match(e.hint, /IndexTTS-2\.5/)
+  assert.match(e.hint, /模型/)
   assert.match(e.hint, /6\.3 GB/)
+  // 模型名是技术细节：只进 detail，不进给用户看的 hint。
+  assert.ok(!e.hint.includes('IndexTTS'))
+  assert.match(e.detail, /IndexTTS-2\.5/)
 })
 
 test('503 + 加载中文案 → model_loading；其它 503 → upstream_error 可重试', () => {
@@ -76,7 +79,7 @@ test('504 → timeout，hint 带秒数；400/401/403/404/413/422 → bad_request
     const e = mapHttpError(status, { ok: false, error: `e${status}`, detail: 'bad' })
     assert.equal(e.code, 'bad_request', `HTTP ${status}`)
     assert.equal(e.retryable, false, `HTTP ${status}`)
-    assert.match(e.hint, /参数有误|令牌/)
+    assert.match(e.hint, /有误|令牌/)
   }
 })
 
@@ -146,7 +149,8 @@ test('extractErrorBody 兼容 OpenAI 风格与顶层 detail', () => {
 test('hint 生成函数', () => {
   assert.match(vramHint(), /显存不足/)
   assert.match(vramHint(6912, 6000), /6\.8 GB/)
-  assert.match(modelMissingHint('htdemucs_ft'), /htdemucs_ft/)
+  assert.match(modelMissingHint('htdemucs_ft'), /模型/)
+  assert.ok(!modelMissingHint('htdemucs_ft').includes('htdemucs_ft'), 'hint 不带模型名')
   assert.match(timeoutHint(60000), /60 秒/)
   assert.equal(isRetryable('bad_request'), false)
   assert.equal(isRetryable('timeout'), true)

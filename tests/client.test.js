@@ -64,7 +64,10 @@ test('503 + capabilityReady=false → model_missing；ready=true → upstream_er
 
   await assert.rejects(
     client.getJson('/x', { capabilityReady: false, model: 'htdemucs_ft', estimateMb: 2000 }),
-    (error) => error.code === 'model_missing' && /htdemucs_ft/.test(error.hint),
+    (error) => error.code === 'model_missing'
+      && /模型/.test(error.hint)
+      && !/htdemucs_ft/.test(error.hint)
+      && /htdemucs_ft/.test(error.detail),
   )
   await assert.rejects(
     client.getJson('/x', { capabilityReady: true }),

@@ -212,7 +212,9 @@ test('require()：可用能力通过；ready=false → model_missing；未知能
   const missing = await svc.require('tts', { force: true })
   assert.equal(missing.ok, false)
   assert.equal(missing.error.code, 'model_missing')
-  assert.match(missing.error.hint, /IndexTTS-2\.5/)
+  assert.match(missing.error.hint, /模型/)
+  assert.ok(!missing.error.hint.includes('IndexTTS'), '界面文案里不出现模型名')
+  assert.match(missing.error.detail, /IndexTTS-2\.5/, '模型名只留在诊断字段里')
 
   const bogus = await svc.require('bogus')
   assert.equal(bogus.ok, false)

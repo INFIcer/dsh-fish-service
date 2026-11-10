@@ -837,7 +837,7 @@ test('POST /read：降级重试仍失败 → 200 + ok:false，hint 带并发/降
   assert.equal(json.ok, false)
   assert.equal(json.code, 'service_down')
   assert.equal(第0批次数, 2)
-  assert.match(json.hint, /并发/)
+  assert.match(json.hint, /同时生成/)
   assert.match(json.hint, /逐段重试/)
 })
 
@@ -943,19 +943,19 @@ test('POST /read/segment：只合成一段，返回 index/wavPath/url/ms/cached/
     method: 'POST', headers: { host: 'x' }, body: { index: -1, text: 'x' },
   })
   assert.equal(负.res.statusCode, 400)
-  assert.match(负.json.hint, /index/)
+  assert.match(负.json.hint, /序号/)
 
   const 越界 = await env.call('/dsh-fish-service/read/segment', {
     method: 'POST', headers: { host: 'x' }, body: { index: 3, total: 3, text: 'x' },
   })
   assert.equal(越界.res.statusCode, 400)
-  assert.match(越界.json.hint, /index/)
+  assert.match(越界.json.hint, /序号/)
 
   const 超总段 = await env.call('/dsh-fish-service/read/segment', {
     method: 'POST', headers: { host: 'x' }, body: { index: 0, total: 41, text: 'x' },
   })
   assert.equal(超总段.res.statusCode, 400)
-  assert.match(超总段.json.hint, /total/)
+  assert.match(超总段.json.hint, /总段数/)
 
   const 空文本 = await env.call('/dsh-fish-service/read/segment', {
     method: 'POST', headers: { host: 'x' }, body: { index: 0, total: 1, text: '   ' },

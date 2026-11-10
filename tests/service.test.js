@@ -628,7 +628,8 @@ test('ensureReady：tts 通过；preload 只对 tts 生效；未知能力 / 缺�
   const missing = await stack2.api.ensureReady('vision')
   assert.equal(missing.ok, false)
   assert.equal(missing.code, 'model_missing')
-  assert.match(missing.hint, /Qwen2\.5-VL/)
+  assert.match(missing.hint, /模型/)
+  assert.ok(!missing.hint.includes('Qwen2.5-VL'), '界面文案里不出现模型名')
 })
 
 test('错误映射：507 → vram_exhausted；503(ready=false) → model_missing；400 → bad_request；504 → timeout', async (t) => {
@@ -654,7 +655,10 @@ test('错误映射：507 → vram_exhausted；503(ready=false) → model_missing
   缺模型.capabilities.tts.ready = false
   const stack2 = await makeStack({ handler: basicHandler({ '/capabilities': (req, res) => sendJson(res, 200, 缺模型) }) })
   t.after(() => stack2.close())
-  await assert.rejects(stack2.api.tts('hi'), (e) => e.code === 'model_missing' && /IndexTTS/.test(e.hint))
+  await assert.rejects(stack2.api.tts('hi'), (e) => e.code === 'model_missing'
+    && /模型/.test(e.hint)
+    && !/IndexTTS/.test(e.hint)
+    && /IndexTTS/.test(e.detail))
   assert.equal(stack2.mock.requests.some((r) => r.path === '/tts'), false)
 })
 
