@@ -529,6 +529,33 @@ test('config：P2 朗读/语音字段可写，非法值给警告且不写', asyn
   assert.equal(stack.store.current.readConcurrency, 3)
 })
 
+test('config：输入设备可写、空串表示系统默认；非法值只警告不写', async (t) => {
+  const stack = await makeStack()
+  t.after(() => stack.close())
+
+  const 好 = await stack.api.config.set({ recordDeviceId: '  mic-abc  ' })
+  assert.equal(好.ok, true)
+  assert.deepEqual(好.applied, ['recordDeviceId'])
+  assert.equal(stack.store.current.recordDeviceId, 'mic-abc')
+  assert.equal(stack.api.config.get().recordDeviceId, 'mic-abc')
+
+  const 空 = await stack.api.config.set({ recordDeviceId: '' })
+  assert.deepEqual(空.applied, ['recordDeviceId'])
+  assert.equal(stack.store.current.recordDeviceId, '')
+
+  const 坏 = await stack.api.config.set({ recordDeviceId: 123 })
+  assert.deepEqual(坏.applied, [])
+  assert.equal(坏.warnings.length, 1)
+  assert.match(坏.warnings[0], /格式不正确/)
+  assert.equal(stack.store.current.recordDeviceId, '')
+
+  const 长 = await stack.api.config.set({ recordDeviceId: 'x'.repeat(201) })
+  assert.deepEqual(长.applied, [])
+  assert.equal(长.warnings.length, 1)
+  assert.match(长.warnings[0], /200 字/)
+  assert.equal(stack.store.current.recordDeviceId, '')
+})
+
 test('config：按会话自动朗读可写、规范化；非法值只警告不写', async (t) => {
   const stack = await makeStack()
   t.after(() => stack.close())

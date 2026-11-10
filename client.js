@@ -657,6 +657,116 @@ select.fish-select option:checked {
         提示 ? h('span', { className: 'fish-panel-dim', role: 'status', style: { marginLeft: 6 } }, 提示) : null)
     }
 
+    // ---------------- 输入设备（纯函数，便于单测） ----------------
+
+    /** 录音约束：空标识 = 跟随系统默认；非空则精确指定该设备。 */
+    function 构建录音约束(deviceId) {
+      const 设备标识 = typeof deviceId === 'string' ? deviceId.trim() : ''
+      const 音频 = { echoCancellation: true, noiseSuppression: true }
+      if (设备标识) 音频.deviceId = { exact: 设备标识 }
+      return { audio: 音频 }
+    }
+
+    /** 设备被拔掉、改名或约束不满足时，浏览器报这几个错误。 */
+    function 设备不可用错误(错误) {
+      const 名 = String(错误?.name || '')
+      return 名 === 'OverconstrainedError' || 名 === 'NotFoundError' || 名 === 'DevicesNotFoundError'
+    }
+
+    /**
+     * 打开麦克风；指定了设备但设备不可用时自动回退到系统默认。
+     * getUserMedia 由调用方注入，便于单测模拟浏览器行为。
+     * 返回 { stream, fellBack }。
+     */
+    async function 打开麦克风(deviceId, getUserMedia) {
+      const 已选 = typeof deviceId === 'string' ? deviceId.trim() : ''
+      const 申请 = typeof getUserMedia === 'function'
+        ? getUserMedia
+        : (约束) => navigator.mediaDevices.getUserMedia(约束)
+      try {
+        return { stream: await 申请(构建录音约束(已选)), fellBack: false }
+      } catch (错误) {
+        if (!已选 || !设备不可用错误(错误)) throw 错误
+        return { stream: await 申请(构建录音约束('')), fellBack: true }
+      }
+    }
+
+    /** 设备名像虚拟声卡/采集卡时，提醒用户改选真实麦克风。 */
+    const 虚拟设备特征 = /stream|virtual|cable|voicemeeter|vb-audio|loopback|stereo\s*mix|立体声混音/i
+
+    function 是虚拟设备名称(名称) {
+      return typeof 名称 === 'string' && 虚拟设备特征.test(名称)
+    }
+
+    function 虚拟设备提示(名称) {
+      return 是虚拟设备名称(名称)
+        ? '当前输入设备可能是虚拟设备，请在设置里改选真实麦克风。'
+        : ''
+    }
+
+    function 补设备提示(文本, 名称) {
+      const 提示 = 虚拟设备提示(名称)
+      return 提示 ? `${文本} ${提示}` : 文本
+    }
+
+    // 输入设备列表与最近一次录音实际使用的设备（只在本次页面会话里，不持久化）。
+    const 设备 = 造store({
+      列表: [],
+      最近名称: '',
+      最近标识: '',
+      枚举中: false,
+      提示: '',
+    })
+
+    async function 已有麦克风权限() {
+      try {
+        if (!navigator.permissions?.query) return false
+        const 状态 = await navigator.permissions.query({ name: 'microphone' })
+        return 状态.state === 'granted'
+      } catch {
+        return false
+      }
+    }
+
+    /** 先申请权限（已有权限就直接枚举），再列出音频输入设备。 */
+    async function 刷新设备列表() {
+      if (设备.get().枚举中) return
+      设备.set((旧) => ({ ...旧, 枚举中: true, 提示: '' }))
+      try {
+        if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+          设备.set((旧) => ({ ...旧, 枚举中: false, 提示: '当前浏览器不支持选择麦克风设备。' }))
+          return
+        }
+        if (!(await 已有麦克风权限())) {
+          let 流
+          try {
+            流 = await navigator.mediaDevices.getUserMedia({ audio: true })
+          } catch {
+            设备.set((旧) => ({ ...旧, 列表: [], 枚举中: false, 提示: '未获得麦克风权限，无法列出设备。' }))
+            return
+          }
+          try { 流?.getTracks?.().forEach((轨) => 轨.stop()) } catch { /* 忽略 */ }
+        }
+        let 全部 = []
+        try { 全部 = await navigator.mediaDevices.enumerateDevices() } catch { 全部 = [] }
+        const 列表 = []
+        for (const 项 of Array.isArray(全部) ? 全部 : []) {
+          if (!项 || 项.kind !== 'audioinput') continue
+          const 标识 = String(项.deviceId || '')
+          if (!标识) continue
+          const 名称 = String(项.label || '').trim() || `麦克风 ${列表.length + 1}`
+          列表.push({ deviceId: 标识, label: 名称 })
+        }
+        if (!列表.length) {
+          设备.set((旧) => ({ ...旧, 列表: [], 枚举中: false, 提示: '未获得麦克风权限，无法列出设备。' }))
+          return
+        }
+        设备.set((旧) => ({ ...旧, 列表, 枚举中: false, 提示: '' }))
+      } catch {
+        设备.set((旧) => ({ ...旧, 枚举中: false, 提示: '未获得麦克风权限，无法列出设备。' }))
+      }
+    }
+
     // ---------------- 录音器（MediaRecorder 优先，退化到 PCM/WAV） ----------------
 
     function 停流(流) {
@@ -916,11 +1026,11 @@ select.fish-select option:checked {
       })
       语音.片段 = null
       let 流
+      let 回退默认 = false
       try {
-        流 = await navigator.mediaDevices.getUserMedia({
-          // 不强制 channelCount：有些声卡/虚拟麦克风会对它报 OverconstrainedError。
-          audio: { echoCancellation: true, noiseSuppression: true },
-        })
+        const 打开 = await 打开麦克风(配置.recordDeviceId || '')
+        流 = 打开.stream
+        回退默认 = 打开.fellBack === true
       } catch (错误) {
         语音.态.set((旧) => ({ ...旧, phase: 'error', error: 麦克风错误(错误) }))
         安排关闭(8000)
@@ -931,8 +1041,22 @@ select.fish-select option:checked {
         return
       }
       let 麦克风名 = ''
-      try { 麦克风名 = String(流.getAudioTracks?.()[0]?.label || '') } catch { 麦克风名 = '' }
-      语音.态.set((旧) => ({ ...旧, micLabel: 麦克风名 }))
+      let 麦克风标识 = ''
+      try {
+        const 轨 = 流.getAudioTracks?.()[0]
+        麦克风名 = String(轨?.label || '')
+        麦克风标识 = String(轨?.getSettings?.()?.deviceId || '')
+      } catch { 麦克风名 = ''; 麦克风标识 = '' }
+      语音.态.set((旧位) => ({
+        ...旧位,
+        micLabel: 麦克风名,
+        hint: 回退默认 ? '所选麦克风不可用，已改用系统默认设备。' : '',
+      }))
+      设备.set((旧位) => ({
+        ...旧位,
+        最近名称: 麦克风名 || 旧位.最近名称,
+        最近标识: 麦克风标识 || 旧位.最近标识,
+      }))
       try {
         const 录音器 = await 创建录音器(流, 配置.recordMime || 'auto')
         if (代 !== 语音.代) {
@@ -1006,7 +1130,7 @@ select.fish-select option:checked {
         语音.态.set((旧) => ({
           ...旧,
           phase: 'error',
-          error: `没有检测到声音${态.micLabel ? `（当前麦克风：${态.micLabel}）` : ''}。请检查系统声音设置里的输入设备是否被静音，或改为默认麦克风后重试。`,
+          error: 补设备提示(`没有检测到声音${态.micLabel ? `（当前麦克风：${态.micLabel}）` : ''}。请检查系统声音设置里的输入设备是否被静音，或改为默认麦克风后重试。`, 态.micLabel),
         }))
         安排关闭(10000)
         return
@@ -1079,12 +1203,20 @@ select.fish-select option:checked {
       const r = await postForm('/transcribe-upload', 表单)
       if (代 !== 语音.代) return
       if (!r || !r.ok) {
-        语音.态.set((旧) => ({ ...旧, phase: 'choose', error: (r && r.hint) || '转写失败，请稍后重试。' }))
+        语音.态.set((旧) => ({
+          ...旧,
+          phase: 'choose',
+          error: 补设备提示((r && r.hint) || '转写失败，请稍后重试。', 旧.micLabel),
+        }))
         return
       }
       const 文本 = String(r.text || '').trim()
       if (!文本) {
-        语音.态.set((旧) => ({ ...旧, phase: 'choose', error: '未识别出文字，可重新录制。' }))
+        语音.态.set((旧) => ({
+          ...旧,
+          phase: 'choose',
+          error: 补设备提示('未识别出文字，可重新录制。', 旧.micLabel),
+        }))
         return
       }
       const 插入成功 = 插入文本(inputActions, 文本)
@@ -1254,6 +1386,9 @@ select.fish-select option:checked {
           `输入音量 ${Math.min(100, Math.round((态.level || 0) * 100))}%`
             + (态.micLabel ? ` · 麦克风：${态.micLabel}` : '')
             + ((态.level || 0) < 0.01 && (态.seconds || 0) > 1 ? '（几乎没有声音，请检查麦克风）' : '')))
+        if (态.hint) {
+          行.push(h('div', { key: 'mic-hint', className: 'fish-panel-dim', style: { marginTop: 4 } }, 态.hint))
+        }
         行.push(h('div', { key: 'acts', className: 'fish-panel-row' },
           h('button', { type: 'button', className: 'fish-btn', 'data-primary': '1', onClick: () => void 停止录音() }, '停止并选择'),
           h('button', { type: 'button', className: 'fish-btn', onClick: 取消录音 }, '取消录音')))
@@ -1520,6 +1655,7 @@ select.fish-select option:checked {
       readSkipCode: '去掉代码块',
       autoRead: '新会话默认自动朗读',
       recordMime: '录音格式',
+      recordDeviceId: '输入设备',
       asrLanguage: '识别语言',
       rememberVoiceChoice: '记住上次选择',
       cacheDir: '缓存目录',
@@ -1571,6 +1707,8 @@ select.fish-select option:checked {
       const [说, 设说] = React.useState('')
       const [日志, 设日志] = React.useState(null)
       const [缓存统计, 设缓存统计] = React.useState(null)
+      const 语音态 = useStore(语音.态)
+      const 设备态 = useStore(设备)
 
       const 拉 = async () => {
         const s = await get('/state')
@@ -1749,8 +1887,38 @@ select.fish-select option:checked {
         行('新会话默认自动朗读', 勾(配置.autoRead === true, (v) => 改('autoRead', v)),
           '仅影响尚未单独设置过的会话；单个会话可在输入框左侧切换。'))
 
+      const 已选设备标识 = String(配置.recordDeviceId || '')
+      const 设备选项 = [{ value: '', label: '系统默认' }]
+      for (const 项 of 设备态.列表) {
+        if (!设备选项.some((x) => x.value === 项.deviceId)) 设备选项.push({ value: 项.deviceId, label: 项.label })
+      }
+      let 已选设备名 = '系统默认'
+      if (已选设备标识) {
+        const 命中 = 设备选项.find((x) => x.value === 已选设备标识)
+        已选设备名 = (命中 && 命中.label)
+          || (设备态.最近标识 === 已选设备标识 ? 设备态.最近名称 : '')
+          || '名称未确认（请刷新设备列表）'
+        if (!命中) 设备选项.push({ value: 已选设备标识, label: 已选设备名 })
+      }
+      const 录音中 = 语音态.phase === 'recording'
+      const 输入音量 = 录音中 ? `${Math.min(100, Math.round((语音态.level || 0) * 100))}%` : '—'
+      const 设备状态 = `已选设备：${已选设备名}｜最近一次录音：${设备态.最近名称 || '—'}｜当前输入音量：${输入音量}`
+
       const 语音块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '语音输入'),
+        行('输入设备',
+          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+            下拉(已选设备标识, 设备选项, (v) => 改('recordDeviceId', v)),
+            h('button', {
+              type: 'button',
+              style: S.btn,
+              disabled: 设备态.枚举中,
+              onClick: () => { void 刷新设备列表() },
+            }, 设备态.枚举中 ? '读取设备中…' : '刷新设备列表')),
+          h('div', null,
+            h('div', null, '选择用于语音输入的麦克风；默认跟随系统设置。'),
+            h('div', { style: { marginTop: 2 } }, 设备状态),
+            设备态.提示 ? h('div', { style: { marginTop: 2 } }, 设备态.提示) : null)),
         行('录音格式', 下拉(配置.recordMime || 'auto', [
           { value: 'auto', label: '自动（按浏览器支持选择）' },
           { value: 'webm', label: 'webm' },
@@ -1886,7 +2054,17 @@ select.fish-select option:checked {
     exports.apply = apply
     exports.inject = inject
     // 仅供单元测试直接验证的纯函数；浏览器运行时不使用。
-    exports.__testing = { 读会话自动朗读, 写会话自动朗读, 会话自动朗读上限, 会话键合法 }
+    exports.__testing = {
+      读会话自动朗读,
+      写会话自动朗读,
+      会话自动朗读上限,
+      会话键合法,
+      构建录音约束,
+      打开麦克风,
+      设备不可用错误,
+      是虚拟设备名称,
+      虚拟设备提示,
+    }
     return module.exports
   },
 })

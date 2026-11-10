@@ -12,7 +12,9 @@ import {
   envOverrides,
   normalizeAutoReadSessions,
   normalizeConfig,
+  normalizeRecordDeviceId,
   publicConfig,
+  RECORD_DEVICE_ID_MAX,
 } from '../lib/config.js'
 import { makeTempDir } from './helpers.js'
 
@@ -44,6 +46,7 @@ test('默认配置符合 P1 契约', () => {
     assert.equal(c.readConcurrency, 2)
     assert.equal(c.readSkipCode, true)
     assert.equal(c.recordMime, 'auto')
+    assert.equal(c.recordDeviceId, '')
     assert.equal(c.rememberVoiceChoice, true)
     assert.equal(c.asrLanguage, 'auto')
   } finally {
@@ -252,6 +255,47 @@ test('autoReadSessions：默认空表；旧配置没有该字段时行为不变'
     assert.deepEqual(旧.autoReadSessions, {})
     // 只有全局默认时，所有会话都按它表现（回落由客户端完成）。
     assert.deepEqual(normalizeAutoReadSessions(undefined), { value: {}, warnings: [], valid: true })
+  } finally {
+    temp.cleanup()
+  }
+})
+
+test('recordDeviceId：默认空串；旧配置不变；非法值忽略并提示', () => {
+  const temp = makeTempDir()
+  try {
+    assert.equal(defaultConfig(temp.dir).recordDeviceId, '')
+    // 旧配置没有该字段：按空串处理，行为与以前一致。
+    const 旧 = normalizeConfig({ autoRead: true }, { homeDir: temp.dir })
+    assert.equal(旧.recordDeviceId, '')
+    assert.deepEqual(normalizeRecordDeviceId(undefined), { value: '', warnings: [], valid: true })
+
+    // 空串合法 = 跟随系统默认；字符串保留（去首尾空白）。
+    assert.equal(normalizeRecordDeviceId('').value, '')
+    assert.equal(normalizeRecordDeviceId('  mic-abc  ').value, 'mic-abc')
+    assert.equal(normalizeRecordDeviceId('x'.repeat(RECORD_DEVICE_ID_MAX)).value.length, RECORD_DEVICE_ID_MAX)
+
+    // 非法类型：忽略并提示，回落空串。
+    const 类型警告 = []
+    const 类型 = normalizeConfig({ recordDeviceId: 42 }, {
+      homeDir: temp.dir,
+      onWarning: (警告) => 类型警告.push(警告),
+    })
+    assert.equal(类型.recordDeviceId, '')
+    assert.equal(类型警告.length, 1)
+    assert.match(类型警告[0], /格式不正确/)
+
+    // 超长：忽略并提示，回落空串。
+    const 长度警告 = []
+    const 超长 = normalizeConfig({ recordDeviceId: 'x'.repeat(RECORD_DEVICE_ID_MAX + 1) }, {
+      homeDir: temp.dir,
+      onWarning: (警告) => 长度警告.push(警告),
+    })
+    assert.equal(超长.recordDeviceId, '')
+    assert.equal(长度警告.length, 1)
+    assert.match(长度警告[0], /最多 200 字/)
+
+    // 合法值写进配置。
+    assert.equal(normalizeConfig({ recordDeviceId: 'mic-abc' }, { homeDir: temp.dir }).recordDeviceId, 'mic-abc')
   } finally {
     temp.cleanup()
   }

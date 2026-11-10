@@ -42,6 +42,7 @@ function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = n
     ttsSpeed: 1,
     autoRead: false,
     autoReadSessions: {},
+    recordDeviceId: '',
     token: '***已设置***',
     enabled: true,
     cacheDir: 'C:\\cache',
@@ -176,6 +177,7 @@ test('GET /state：配置 / health / 能力 / 音色 / 缓存 / 错误 / env 覆
   assert.equal(json.plugin.logFile, 'C:\\Users\\Administrator\\.dsh\\fish-service.log')
   assert.equal(json.config.token, '***已设置***')
   assert.deepEqual(json.config.autoReadSessions, {})
+  assert.equal(json.config.recordDeviceId, '')
   assert.equal(json.health.ok, true)
   assert.equal(json.health.serviceVersion, '2.5.0')
   assert.equal(json.capabilities.tts.available, true)
@@ -198,6 +200,15 @@ test('POST /save：合法保存；GET 405；跨站 403；API 错 → 400', async
   assert.deepEqual(ok.json.applied, ['ttsVoice'])
   assert.equal(ok.json.config.token, '***已设置***')
   assert.deepEqual(env.调用.保存[0], { ttsVoice: 'default' })
+
+  const 设备 = await env.call('/dsh-fish-service/save', {
+    method: 'POST',
+    body: { config: { recordDeviceId: 'mic-abc' } },
+    headers: { host: '127.0.0.1:10154' },
+  })
+  assert.equal(设备.res.statusCode, 200)
+  assert.deepEqual(设备.json.applied, ['recordDeviceId'])
+  assert.deepEqual(env.调用.保存.at(-1), { recordDeviceId: 'mic-abc' })
 
   const wrongMethod = await env.call('/dsh-fish-service/save')
   assert.equal(wrongMethod.res.statusCode, 405)

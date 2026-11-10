@@ -45,6 +45,7 @@ dsh-fish-ops（P4，规划中；本仓库未实现）
 - **语音输入**（`conversation.input.right`）：麦克风录音（webm/opus 优先，退化 WAV）→
   结束时在输入框浮层里三选一：**转文字**（插到光标处）/ **保留语音**（存 `cacheDir/voice`，
   路径插进输入框）/ **取消**。录音上限 5 分钟、25MB；记住上次选择只做高亮。
+  可在设置页「语音输入」里选择输入设备（默认跟随系统）；所选设备不可用时自动回退到系统默认。
 - **自动朗读开关**（`conversation.input.left`）：按会话保存；未单独设置过的会话沿用设置页的「新会话默认自动朗读」。
 - **设置页**：在 P1 同一页里新增「朗读」「语音输入」「缓存」分区。
 
@@ -93,6 +94,7 @@ Get-Content C:\Users\Administrator\.dsh\profiles\desktop\package.json -Raw
 | `readConcurrency` | `2` | 朗读分段合成的批间并发度 1~4（1 = 完全串行） |
 | `readSkipCode` | `true` | 朗读时去掉代码块（关=念「代码块，共 N 行」） |
 | `recordMime` | `"auto"` | 录音格式 auto/webm/wav |
+| `recordDeviceId` | `""` | 语音输入使用的麦克风设备标识；空 = 跟随系统默认 |
 | `rememberVoiceChoice` | `true` | 记住语音输入上次选择（只做高亮） |
 | `asrLanguage` | `"auto"` | 语音输入 ASR 语言 auto/zh/en/ja |
 | `cacheDir` | `~/.dsh/fish-service-cache` | 产物目录；只在这里写文件 |
