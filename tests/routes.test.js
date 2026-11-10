@@ -2,7 +2,7 @@
 // /read /audio /transcribe-upload /voice-upload：方法限制、同源、错误码、脱敏、防穿越。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { registerRoutes } from '../lib/routes.js'
 import { CacheStore } from '../lib/cache.js'
@@ -35,7 +35,7 @@ function 快照(overrides = {}) {
   }
 }
 
-function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = null, 配置补丁 = {}, 缓存 = null } = {}) {
+function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = null, 配置补丁 = {}, 缓存 = null, spawn = null } = {}) {
   const 配置 = {
     baseUrl: 'http://127.0.0.1:7880',
     ttsVoice: 'dafeiyu',
@@ -70,7 +70,7 @@ function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = n
     status: () => 状态,
   }
 
-  const 调用 = { 保存: [], voices: 0, 日志行数: [], refresh: 0 }
+  const 调用 = { 保存: [], voices: 0, 日志行数: [], refresh: 0, spawn: [] }
   const api = {
     config: {
       get: () => ({ ...配置 }),
@@ -113,6 +113,11 @@ function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = n
     cache,
     logger,
     version: '0.1.0',
+    // 默认不真的启动 explorer；需要时由用例通过 spawn 注入替身。
+    spawn: spawn || ((命令, 参数, 选项) => {
+      调用.spawn.push({ 命令, 参数, 选项 })
+      return { unref: () => {} }
+    }),
   })
 
   const call = async (path, { method = 'GET', body, headers = {}, search = '' } = {}) => {
@@ -129,7 +134,7 @@ function 搭环境({ apiOverrides = {}, 初始快照 = 快照(), refreshImpl = n
   return { routes, api, 配置, configStore, capabilities, 调用, dispose, call }
 }
 
-test('注册 15 条约定路由；全部 kind=exact', () => {
+test('注册 16 条约定路由；全部 kind=exact', () => {
   const env = 搭环境()
   assert.deepEqual([...env.routes.keys()].sort(), [
     '/dsh-fish-service/audio',
@@ -138,6 +143,7 @@ test('注册 15 条约定路由；全部 kind=exact', () => {
     '/dsh-fish-service/cache/stats',
     '/dsh-fish-service/health',
     '/dsh-fish-service/logs',
+    '/dsh-fish-service/open-folder',
     '/dsh-fish-service/read',
     '/dsh-fish-service/read/plan',
     '/dsh-fish-service/read/segment',
@@ -447,6 +453,135 @@ test('GET /audio：只读 cacheDir 里的音频；穿越 / 缺文件 / 错扩展
     外面.cleanup()
   }
 })
+
+test('POST /open-folder：只打开 cacheDir 内的目录，spawn 用替身，不弹资源管理器', async () => {
+  const temp = makeTempDir()
+  const 外面 = makeTempDir()
+  try {
+    const 子目录 = join(temp.dir, 'voice')
+    mkdirSync(子目录, { recursive: true })
+    writeFileSync(join(temp.dir, 'a.txt'), 'x', 'utf8')
+
+    const env = 搭环境({ 配置补丁: { cacheDir: temp.dir } })
+
+    // 缓存目录本身：允许，且解析成 realpath 后交给 explorer。
+    const 根 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: temp.dir },
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(根.res.statusCode, 200)
+    assert.equal(根.json.ok, true)
+    assert.equal(根.json.path, realpathSync(temp.dir))
+    assert.equal(env.调用.spawn.length, 1)
+    assert.equal(env.调用.spawn[0].命令, 'explorer.exe')
+    assert.deepEqual(env.调用.spawn[0].参数, [realpathSync(temp.dir)])
+    assert.deepEqual(env.调用.spawn[0].选项, { detached: true, stdio: 'ignore' })
+
+    // 子目录也能开。
+    const 子 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: 子目录 },
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(子.res.statusCode, 200)
+    assert.deepEqual(env.调用.spawn.at(-1).参数, [realpathSync(子目录)])
+
+    // 缓存目录之外 / 相对路径 / 空 / 不存在 / 不是目录：一律拒绝，且不 spawn。
+    const 外面请求 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: 外面.dir },
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(外面请求.res.statusCode, 403)
+    assert.match(外面请求.json.hint, /缓存目录/)
+
+    const 穿越 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: join(temp.dir, '..') },
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(穿越.res.statusCode, 403)
+
+    const 相对 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: 'cache' },
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(相对.res.statusCode, 400)
+    assert.match(相对.json.hint, /绝对路径/)
+
+    const 空 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: {},
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(空.res.statusCode, 400)
+
+    const 不存在 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: join(temp.dir, 'nope') },
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(不存在.res.statusCode, 404)
+
+    const 文件 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: join(temp.dir, 'a.txt') },
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(文件.res.statusCode, 400)
+    assert.match(文件.json.hint, /不是文件夹/)
+
+    assert.equal(env.调用.spawn.length, 2)
+
+    // 方法和来源校验：GET 405，跨站 403。
+    const 错方法 = await env.call('/dsh-fish-service/open-folder')
+    assert.equal(错方法.res.statusCode, 405)
+
+    const 跨站 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: temp.dir },
+      headers: { host: '127.0.0.1:10154', origin: 'http://evil.example' },
+    })
+    assert.equal(跨站.res.statusCode, 403)
+    assert.equal(env.调用.spawn.length, 2)
+  } finally {
+    temp.cleanup()
+    外面.cleanup()
+  }
+})
+
+test('POST /open-folder：spawn 失败给可操作提示；缓存目录还不存在时明确说', async () => {
+  const temp = makeTempDir()
+  try {
+    const env = 搭环境({
+      配置补丁: { cacheDir: temp.dir },
+      spawn: () => { throw new Error('explorer 启动失败') },
+    })
+    const 失败 = await env.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: temp.dir },
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(失败.res.statusCode, 500)
+    assert.equal(失败.json.ok, false)
+    assert.match(失败.json.hint, /手动打开/)
+
+    // cacheDir 指向不存在的目录：提示先保存设置，而不是报“没有权限”。
+    const 缺根 = 搭环境({ 配置补丁: { cacheDir: join(temp.dir, 'missing') } })
+    const 回包 = await 缺根.call('/dsh-fish-service/open-folder', {
+      method: 'POST',
+      body: { path: temp.dir },
+      headers: { host: '127.0.0.1:10154' },
+    })
+    assert.equal(回包.res.statusCode, 400)
+    assert.match(回包.json.hint, /缓存目录/)
+  } finally {
+    temp.cleanup()
+  }
+})
+
 
 test('POST /transcribe-upload：multipart 录音 → ASR 文本；临时文件请求后删除', async () => {
   const temp = makeTempDir()

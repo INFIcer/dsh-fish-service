@@ -786,6 +786,7 @@ interface InstallApi {
 | GET | `/cache/stats` | — | `{ok, kind:"tts", files, bytes, hits, misses, hitRate}`（P2.1，服务层内存计数） |
 | POST | `/cache/clear` | `{kind?}` | `{ok, kind, files, bytes, kinds}`；省略 kind 清产物但保留 `voice`（P2.1） |
 | POST | `/cache/cleanup` | — | `{ok, expired, lru, bytesFreed, scanned}`（P2.1，调 `CacheStore.cleanup()`） |
+| POST | `/open-folder` | `{path}` | `{ok, path}`；在文件管理器里打开目录，只接受 `cacheDir` 内已存在的目录（realpath 校验，非 Windows 返回「暂不支持」） |
 | GET | `/audio?path=` | — | `audio/*`；只允许 `cacheDir` 内的 `.wav/.webm/.ogg/.opus/.mp3/.m4a`（P2） |
 | POST | `/transcribe-upload` | multipart `file` + `durationMs?` + `language?` + `speaker?` | `{ok, text, ms, elapsedMs?, language?, speaker?}`（P2，临时文件请求结束即删） |
 | POST | `/voice-upload` | multipart `file` + `durationMs?` | `{ok, path, bytes, mime}`（P2，存 `cacheDir/voice`） |
@@ -810,6 +811,7 @@ interface InstallApi {
 安全：
 
 - 所有 POST 要求同源（检查 `Origin`/`Referer` 为 DSH 页面）；
+- `/open-folder` 只打开 `cacheDir` 本身或其子目录：路径须为绝对路径、已存在、是目录，两边 realpath 后再判包含关系，防符号链接穿越；
 - `/audio/:id` 只接受 `[a-f0-9-]+`，映射表里查不到就 404；
 - `/logs` 不接受任意 `file` 路径，只接受 `service`/`err` 枚举；
 - 不返回 token、不返回 localai 的绝对 `outputs/` 路径。

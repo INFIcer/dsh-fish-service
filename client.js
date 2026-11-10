@@ -1706,11 +1706,20 @@ select.fish-select option:checked {
       'aria-label': 说明,
     }, '?')
 
-    const 行 = (标签, 控件, 说明, 解释) => h('div', { style: S.row },
-      h('div', { style: S.lab },
-        h('span', null, 标签),
-        解释 ? 问号(解释) : null),
-      h('div', { style: S.ctl }, 控件, 说明 ? 提示(说明) : null))
+    /**
+     * 一行设置。说明只保留一种形式，二选一：
+     *   字符串        → 控件下方一行短句；
+     *   { 问: '…' }   → 标签后的「?」，悬浮展开。
+     */
+    const 行 = (标签, 控件, 说明) => {
+      const 问文 = 说明 && typeof 说明 === 'object' && typeof 说明.问 === 'string' ? 说明.问 : ''
+      const 短句 = typeof 说明 === 'string' ? 说明 : ''
+      return h('div', { style: S.row },
+        h('div', { style: S.lab },
+          h('span', null, 标签),
+          问文 ? 问号(问文) : null),
+        h('div', { style: S.ctl }, 控件, 短句 ? 提示(短句) : null))
+    }
 
     /** 可折叠的一块内容：默认收起，标题旁给一行摘要，避免大段内容铺满设置页。 */
     function 折叠块(props) {
@@ -1867,6 +1876,12 @@ select.fish-select option:checked {
 
       React.useEffect(() => { void 拉缓存统计() }, [])
 
+      const 打开缓存目录 = async () => {
+        const r = await post('/open-folder', { path: String(配置.cacheDir || 缓存.dir || '').trim() })
+        if (r && r.ok) 设说('已在文件管理器中打开缓存目录。')
+        else 设说(`打开文件夹失败：${(r && r.hint) || '请手动打开。'}`)
+      }
+
       if (!态) {
         return h('div', { className: 'fish-service-settings', style: S.wrap },
           h('div', { style: S.h1 }, '本地 AI'),
@@ -1878,9 +1893,9 @@ select.fish-select option:checked {
       const 能力块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '能力'),
         h('div', { style: { ...S.dim, marginBottom: 6 } },
-          `${可用数} / ${能力名们.length} 项可用；不可用的项目会说明原因。`),
+          `${可用数} / ${能力名们.length} 项可用`),
         h(折叠块, {
-          摘要: 可用数 === 能力名们.length ? '各项能力都可用' : '有不可用的项目',
+          摘要: '',
           默认展开: 可用数 < 能力名们.length,
           展开字样: '查看各项',
           收起字样: '收起',
@@ -1906,16 +1921,14 @@ select.fish-select option:checked {
       const 服务块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '服务连接'),
         行('服务地址', 输入(配置.baseUrl, (v) => 改('baseUrl', v), ''),
-          '本地 AI 的地址，一般不需要修改。',
-          '只有本地 AI 装在别处、或改用其它地址时才需要填写。修改后请点「测试连接」确认。'),
+          { 问: '一般不用改；改了地址后点「测试连接」确认。' }),
         行('请求超时（秒）', h('input', {
           style: S.small, type: 'number', min: 1, max: 1800,
           value: Math.round((Number(配置.requestTimeoutMs) || 180000) / 1000),
           onChange: (e) => 改('requestTimeoutMs', Number(e.target.value) * 1000),
-        }), '单次请求最多等待多久，默认 180 秒。',
-          '语音识别、人声分离与视觉分析会自动使用更长的等待时间，这里只影响一般请求。'),
+        }), { 问: '只影响一般请求；识别、分离与视觉分析另有更长的等待时间。' }),
         行('总开关', 勾(配置.enabled !== false, (v) => 改('enabled', v)),
-          '关闭后，朗读、语音输入等工具都不可用；设置页仍可以打开。'),
+          '关闭后朗读与语音输入都不可用。'),
         (态.envOverrides && 态.envOverrides.length)
           ? h('div', { style: { ...S.danger, marginTop: 4 } },
               `以下设置已由系统统一指定，在设置页修改不会生效：${态.envOverrides.map((名) => 配置中文[名] || '其他设置').join('、')}`)
@@ -1923,32 +1936,26 @@ select.fish-select option:checked {
 
       const 朗读块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '朗读'),
-        行('默认音色', 下拉(配置.ttsVoice || 'dafeiyu', 音色选项, (v) => 改('ttsVoice', v)),
-          '朗读使用的声音，消息旁的朗读按钮也用这个声音。'),
+        行('默认音色', 下拉(配置.ttsVoice || 'dafeiyu', 音色选项, (v) => 改('ttsVoice', v))),
         行('语速', h('input', {
           style: S.small, type: 'number', min: 0.5, max: 2, step: 0.05,
           value: 配置.ttsSpeed ?? 1,
           onChange: (e) => 改('ttsSpeed', Number(e.target.value)),
-        }), '0.5~2.0，默认 1.0；数值越大语速越快。'),
+        })),
         行('去掉代码块', 勾(配置.readSkipCode !== false, (v) => 改('readSkipCode', v)),
-          '开启后跳过代码块；关闭后只播报「代码块，共 N 行」，不读代码内容。'),
+          '关闭后只提示「代码块，共 N 行」。'),
         行('单次最大字数', h('input', {
           style: S.small, type: 'number', min: 200, max: 5000, step: 100,
           value: 配置.readMaxChars ?? 2000,
           onChange: (e) => 改('readMaxChars', Number(e.target.value)),
-        }), '每段最多读多少字（200~5000）。内容更长时会自动分段，边生成边播放。',
-          '分段只是把长内容拆开逐段生成，不会打断朗读。单条消息超过 2 万字时，只朗读前 2 万字。'),
+        }), { 问: '超过 2 万字的部分不朗读；长内容会自动分段。' }),
         行('同时生成', h('input', {
           style: S.small, type: 'number', min: 1, max: 4, step: 1,
           value: 配置.readConcurrency ?? 2,
           onChange: (e) => 改('readConcurrency', Number(e.target.value)),
-        }), '同时生成几段语音（1~4），默认 2。',
-          '数值越大，长内容出声越快，但更占显存：播放卡顿或显存紧张时建议调低，最慢也只是逐段生成。'),
+        }), { 问: '数值越大出声越快、更占显存；卡顿时调低。' }),
         行('新会话默认自动朗读', 勾(配置.autoRead === true, (v) => 改('autoRead', v)),
-          '只影响还没有单独设置过的会话。',
-          '开启后，新收到的回复会自动朗读。每个会话都能在输入框左侧单独开关，单独设置过的会话不受这里影响。'),
-        h('div', { style: { ...S.dim, marginTop: 2 } },
-          '朗读音频在本机生成并缓存，不联网，也不会产生额外费用。'))
+          { 问: '只影响未单独设置过的会话；每个会话可单独开关。' }))
 
       const 已选设备标识 = String(配置.recordDeviceId || '')
       const 设备选项 = [{ value: '', label: '系统默认' }]
@@ -1970,40 +1977,39 @@ select.fish-select option:checked {
       const 语音块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '语音输入'),
         行('输入设备',
-          h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
-            下拉(已选设备标识, 设备选项, (v) => 改('recordDeviceId', v)),
-            h('button', {
-              type: 'button',
-              style: S.btn,
-              disabled: 设备态.枚举中,
-              onClick: () => { void 刷新设备列表() },
-            }, 设备态.枚举中 ? '读取中…' : '刷新设备列表')),
           h('div', null,
-            h('div', null, '语音输入使用的麦克风。'),
-            h('div', { style: { marginTop: 2 } }, 设备状态),
-            设备态.提示 ? h('div', { style: { marginTop: 2 } }, 设备态.提示) : null),
-          '默认跟随系统设置。有多支麦克风、或录音没有声音时，可以在这里指定；选到虚拟设备（如「立体声混音」）通常录不到人声。'),
+            h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } },
+              下拉(已选设备标识, 设备选项, (v) => 改('recordDeviceId', v)),
+              h('button', {
+                type: 'button',
+                style: S.btn,
+                disabled: 设备态.枚举中,
+                onClick: () => { void 刷新设备列表() },
+              }, 设备态.枚举中 ? '读取中…' : '刷新设备列表')),
+            h('div', { style: { marginTop: 2 } },
+              设备状态,
+              设备态.提示 ? h('div', { style: { marginTop: 2 } }, 设备态.提示) : null)),
+          { 问: '有多支麦克风或录音无声时可指定；虚拟设备常录不到人声。' }),
         行('录音格式', 下拉(配置.recordMime || 'auto', [
           { value: 'auto', label: '自动（推荐）' },
           { value: 'webm', label: '体积较小' },
           { value: 'wav', label: '体积较大' },
-        ], (v) => 改('recordMime', v)), '一般保持「自动」即可。',
-          '「自动」会选用浏览器支持的格式。若转写结果异常（例如只有杂音、识别不全），可以换另一种格式再试一次。'),
+        ], (v) => 改('recordMime', v)), { 问: '转写结果异常时，换一种格式再试。' }),
         行('识别语言', 下拉(配置.asrLanguage || 'auto', [
           { value: 'auto', label: '自动判断' },
           { value: 'zh', label: '中文' },
           { value: 'en', label: '英文' },
           { value: 'ja', label: '日文' },
-        ], (v) => 改('asrLanguage', v)), '转写时使用的语言；一般保持自动判断即可。'),
+        ], (v) => 改('asrLanguage', v))),
         行('记住上次选择', 勾(配置.rememberVoiceChoice !== false, (v) => 改('rememberVoiceChoice', v)),
-          '只把上次的选项高亮显示，不会自动执行。'),
+          '只高亮上次的选项，不会自动执行。'),
         h('div', { style: { ...S.dim, marginTop: 2 } },
-          '录音最长 5 分钟、最大 25MB。录音只在本机处理，不联网，也不产生额外费用。'))
+          '录音最长 5 分钟、最大 25MB。'))
 
       const 缓存块 = h('div', { style: S.card },
         h('div', { style: S.h2 }, '缓存'),
         h('div', { style: S.dim },
-          `当前占用 ${缓存.mb || 0} MB，共 ${缓存.files || 0} 个文件。相同的文字、音色和语速再次朗读时直接复用，不重复生成。`),
+          `当前占用 ${缓存.mb || 0} MB，共 ${缓存.files || 0} 个文件。`),
         h(折叠块, {
           摘要: 缓存统计
             ? `已复用 ${缓存统计.hits || 0} 次，复用率 ${Math.round((缓存统计.hitRate || 0) * 1000) / 10}%`
@@ -2011,19 +2017,21 @@ select.fish-select option:checked {
           展开字样: '查看明细',
           收起字样: '收起明细',
         },
-          行('保存位置', 输入(配置.cacheDir, (v) => 改('cacheDir', v), ''),
-            '朗读音频、分离音轨、关键帧与保留的录音都保存在这里。'),
+          行('保存位置',
+            h('div', { style: { display: 'flex', gap: 8, alignItems: 'center' } },
+              输入(配置.cacheDir, (v) => 改('cacheDir', v), ''),
+              h('button', { type: 'button', style: S.btn, onClick: 打开缓存目录, disabled: 忙 }, '打开文件夹')),
+            { 问: '朗读音频、分离音轨、关键帧和保留的录音都在这里。' }),
           行('缓存上限（MB）', h('input', {
             style: S.small, type: 'number', min: 256, max: 10240, step: 256,
             value: 配置.cacheMaxMb ?? 2048,
             onChange: (e) => 改('cacheMaxMb', Number(e.target.value)),
-          }), '占用超过上限时，自动删掉最久没有用到的文件。'),
+          }), '超出上限时先删最久没用的文件。'),
           行('保留时长（小时）', h('input', {
             style: S.small, type: 'number', min: 1, max: 720, step: 1,
             value: 配置.cacheTtlHours ?? 72,
             onChange: (e) => 改('cacheTtlHours', Number(e.target.value)),
-          }), '超过保留时长的文件会被自动清理。',
-            '默认保留 72 小时、上限 2048 MB。清理只删除缓存文件，不会影响设置，也不会删除主动保留的录音。'),
+          }), '过期的文件会自动清理。'),
           h('div', { style: { ...S.dim, marginTop: 4 } },
             '已缓存音频：' + (缓存统计
               ? `${缓存统计.files || 0} 段 / ${(Math.round(((缓存统计.bytes || 0) / 1024 / 1024) * 10) / 10)} MB；`
@@ -2033,7 +2041,7 @@ select.fish-select option:checked {
           h('button', { type: 'button', style: S.btn, onClick: 清缓存, disabled: 忙 }, '清空朗读缓存'),
           h('button', { type: 'button', style: S.btn, onClick: 清过期, disabled: 忙 }, '清理过期缓存')),
         h('div', { style: { ...S.dim, marginTop: 4 } },
-          '清空后，下次朗读会重新生成语音；清理只删除已过期或超出上限的文件。'))
+          '清空后下次朗读会重新生成。'))
 
       const 动作块 = h('div', { style: S.card },
         h('div', { style: { display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap' } },
@@ -2046,7 +2054,7 @@ select.fish-select option:checked {
             disabled: 忙,
           }, '重新读取')),
         h('div', { style: { ...S.dim, marginTop: 6 } },
-          '保存后立即生效，无需重启；「测试连接」只检查本地 AI 是否可连通。'))
+          '保存后立即生效，不用重启。'))
 
       const 状态块 = h('div', { style: S.card },
         h('div', { style: { display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' } },
@@ -2083,7 +2091,7 @@ select.fish-select option:checked {
           h('button', { type: 'button', style: S.btn, onClick: 看日志, disabled: 忙 }, '读取日志')),
         h('pre', { style: S.logs }, 日志 ? 日志.join('\n') : '（点「读取日志」查看）'),
         h('div', { style: { ...S.dim, marginTop: 4 } },
-          '日志只记录运行情况；遇到问题时可以读取后复制给维护者。'))
+          '遇到问题时读取并复制给维护者。'))
 
       return h('div', { className: 'fish-service-settings', style: S.wrap },
         状态块,
